@@ -1,0 +1,4 @@
+include noisemodel/data/*.txt
+include noisemodel/data/*.csv
+include noisemodel/data/*.json
+include noisemodel/data/*.yml
