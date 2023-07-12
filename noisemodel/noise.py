@@ -6,9 +6,18 @@ class NoisePoint:
     W0 = 10 ** (-12)  # reference value for sound power [W]
     I0 = 10 ** (-12)  # reference value for sound intensity [W/m2]
 
+    def __init__(self):
+        self.alpha = float(input("Enter the air absorption coefficient alpha in [dB/km]: "))
+        self.alpha /= 1000  # Convert alpha from dB/km to dB/m
+    #...
+
+
     def calculate_sound_intensity_level(self, dBsource, distance):
         wattsource = (10 ** (dBsource / 10)) * self.W0
-        return wattsource / (4 * math.pi * distance ** 2)
+        intensity_level = wattsource / (4 * math.pi * distance ** 2)
+        # apply air absorption
+        intensity_level = 10 ** (-self.alpha * distance / 10) * intensity_level
+        return intensity_level
 
     def convert_intensity_level_into_dB(self, intensity_level):
         return 10 * math.log10(intensity_level / self.I0)
@@ -31,6 +40,8 @@ class NoiseMap:
     I0 = 10 ** (-12)  # reference value for sound intensity [W/m2]
 
     def __init__(self, num_turbines):
+        self.alpha = float(input("Enter the air absorption coefficient alpha [dB/km]: "))
+        self.alpha /= 1000  # Convert alpha from dB/km to dB/m
         self.wind_turbines = []
         for i in range(num_turbines):
             x = float(input(f"Enter the x-coordinate of wind turbine {i+1} (in meters): "))
@@ -43,7 +54,10 @@ class NoiseMap:
         if distance == 0:
             return float('inf')  # return infinity if distance is zero
         wattsource = (10 ** (dBsource / 10)) * self.W0
-        return wattsource / (4 * math.pi * distance ** 2)
+        intensity_level = wattsource / (4 * math.pi * distance ** 2)
+        # apply air absorption
+        intensity_level = 10 ** (-self.alpha * distance / 10) * intensity_level
+        return intensity_level
 
     def convert_intensity_level_into_dB(self, intensity_level):
         return 10 * math.log10(intensity_level / self.I0)
@@ -90,6 +104,8 @@ class NoiseMap:
             mask = distance >= 1
             intensity_source = 10 ** (turbine['noise_level'] / 10) * 1e-12
             intensity = np.where(mask & (distance != 0), intensity_source / (4 * np.pi * distance ** 2), 0)
+            # apply air absorption
+            intensity = 10 ** (-self.alpha * distance / 10) * intensity
             Z += intensity
 
         Z = 10 * np.log10(Z / 1e-12)
