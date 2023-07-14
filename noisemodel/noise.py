@@ -75,12 +75,13 @@ class NoiseMap:
         print(f"The total_intensity_level is {total_intensity_level} W/m2 or {dB_total} dB")
         return dB_total
 
-    def generate_noise_map(self, listening_point=None):
+    def generate_noise_map(self, listening_point=None): #generate mao
         x_min = min(turbine['position'][0] for turbine in self.wind_turbines)
         x_max = max(turbine['position'][0] for turbine in self.wind_turbines)
         y_min = min(turbine['position'][1] for turbine in self.wind_turbines)
         y_max = max(turbine['position'][1] for turbine in self.wind_turbines)
 
+        # adapt size of the map to the listening point
         if listening_point:
             x_min = min(x_min, listening_point[0]) - 100
             x_max = max(x_max, listening_point[0]) + 100
@@ -101,9 +102,10 @@ class NoiseMap:
             dx = X - turbine['position'][0]
             dy = Y - turbine['position'][1]
             distance = np.sqrt(dx ** 2 + dy ** 2)
-            mask = distance >= 1
+            mask = distance >= 1 #mask = distance >= 1 is used to create a boolean mask that identifies locations at least 1 meter away from the sound source, avoiding issues with high sound intensity for points too close to the source.
+            #apply geometrical absorption
             intensity_source = 10 ** (turbine['noise_level'] / 10) * 1e-12
-            intensity = np.where(mask & (distance != 0), intensity_source / (4 * np.pi * distance ** 2), 0)
+            intensity = np.where(mask & (distance != 0), intensity_source / (4 * np.pi * distance ** 2), 0) #mask variable is used to selectively apply the sound intensity calculation to elements where the distance is both greater than or equal to 1 and not zero, while setting the intensity to zero for all other elements.
             # apply air absorption
             intensity = 10 ** (-self.alpha * distance / 10) * intensity
             Z += intensity
@@ -113,6 +115,7 @@ class NoiseMap:
         self.X, self.Y, self.Z = X, Y, Z
 
     def plot_noise_map(self):
+        # matplotlib library
         plt.figure(figsize=(10, 6))
         plt.contourf(self.X, self.Y, self.Z, levels=20, cmap='RdYlBu_r')
         plt.colorbar(label='Noise Level (dB)')
@@ -138,9 +141,9 @@ class NoiseMap:
         total_dB = 10 * math.log10(total_intensity / self.I0)
         return total_dB
 
-    def plot_noise_map(self, listening_point=None):
+    def plot_noise_map(self, listening_point=None): #listening_point parameter is optional
         plt.figure(figsize=(10, 6))
-        plt.contourf(self.X, self.Y, self.Z, levels=20, cmap='RdYlBu_r')
+        plt.contourf(self.X, self.Y, self.Z, levels=20, cmap='RdYlBu_r') #creates contour lines at 20 differents levels
         plt.colorbar(label='Noise Level (dB)')
         plt.title('Wind Turbine Noise Contours')
         plt.xlabel('x (meters)')
