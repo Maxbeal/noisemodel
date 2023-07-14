@@ -22,7 +22,7 @@ class NoisePoint:
     def __init__(self):
         self.alpha = float(input("Enter the air absorption coefficient alpha in [dB/km]: "))
         self.alpha /= 1000  # Convert alpha from dB/km to dB/m
-    #...
+
 
 
     def calculate_sound_intensity_level(self, dBsource, distance):
