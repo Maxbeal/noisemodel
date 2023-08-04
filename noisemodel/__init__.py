@@ -5,4 +5,4 @@ __all__ = ("__version__", "DATA_DIR", "NoiseEmissions")
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
-from .noise import NoiseEmissions
+from .noise import NoisePoint, NoiseMap

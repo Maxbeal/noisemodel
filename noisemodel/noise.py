@@ -3,6 +3,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 class NoisePoint:
+    """
+    This class represents a single wind turbine.
+
+    Attributes
+    ----------
+    alpha : float
+        Air absorption coefficient [dB/m]
+    W0 : float
+        Reference value for sound power [W]
+    I0 : float
+        Reference value for sound intensity [W/m2]
+
+    """
     W0 = 10 ** (-12)  # reference value for sound power [W]
     I0 = 10 ** (-12)  # reference value for sound intensity [W/m2]
 
@@ -13,6 +26,12 @@ class NoisePoint:
 
 
     def calculate_sound_intensity_level(self, dBsource, distance):
+        """
+        Calculate the sound intensity level at a given distance from a wind turbine.
+        :param dBsource:
+        :param distance:
+        :return:
+        """
         wattsource = (10 ** (dBsource / 10)) * self.W0
         intensity_level = wattsource / (4 * math.pi * distance ** 2)
         # apply air absorption
