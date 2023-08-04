@@ -1,1 +1,2 @@
-py_wake
+joblib
+scikit-learn
