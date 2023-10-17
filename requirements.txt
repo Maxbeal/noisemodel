@@ -1,2 +1,10 @@
-joblib
+tqdm
+haversine
+folium
+shapely
+windrose
+xarray
 scikit-learn
+numpy
+ipywidgets
+osmnx

@@ -31,17 +31,27 @@ def package_files(directory):
 
 
 setup(
-    name="noisemodel",
+    name="WindWhisper",
     version="0.0.1",
     python_requires=">=3.9",
     packages=packages,
-    author="Maxime Balandret",
+    author="Maxime Balandret, Romain Sacchi",
+    author_email="maxime.balandret@psi.ch, romain.sacchi@psi.ch",
     license=open("LICENSE").read(),
     # Only if you have non-python data (CSV, etc.).
     # Might need to change the directory name as well.
     include_package_data=True,
     install_requires=[
-        "py_wake",
+        "tqdm",
+        "haversine",
+        "folium",
+        "shapely",
+        "windrose",
+        "xarray",
+        "scikit-learn",
+        "numpy",
+        "ipywidgets",
+        "osmnx"
     ],
     url="https://github.com/MaximeBalandret/noisemodel",
     description="Noise modelling of wind turbines",
