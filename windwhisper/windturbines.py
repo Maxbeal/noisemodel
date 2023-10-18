@@ -23,7 +23,8 @@ import xarray as xr
 from xarray import DataArray
 
 from . import DATA_DIR
-from .windspeed import WindSpeed, calculate_mean_speed
+from .windspeed import WindSpeed
+from .noisemap import NoiseMap
 
 
 def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, List[str]]:
@@ -175,14 +176,49 @@ def check_wind_turbine_specs(wind_turbines: List[Dict]) -> List[Dict]:
 
     return wind_turbines
 
+def check_listeners(listeners):
+    """
+    Check that the list of dictionaries contain all the needed keys.
+    :param listeners: list of dictionaries with listeners specifics
+    :return: None or Exception
+    """
+
+    mandatory_fields = [
+        "name",
+        "position"
+    ]
+
+    for listener in listeners:
+        for field in mandatory_fields:
+            try:
+                listener[field]
+            except KeyError:
+                raise KeyError(f"Missing field '{field}' in listener {listener['name']}") from None
+
+    # check that the value for `position`is a tuple of two floats
+    for listener in listeners:
+        if not isinstance(listener["position"], tuple):
+            raise ValueError(f"The position of listener {listener['name']} must be a tuple.")
+        if len(listener["position"]) != 2:
+            raise ValueError(f"The position of listener {listener['name']} must contain two values.")
+        if not all(isinstance(x, float) for x in listener["position"]):
+            raise ValueError(f"The position of listener {listener['name']} must contain two floats.")
+
+    return listeners
+
 
 class WindTurbines:
     """
     This class models a wind turbine and predicts noise levels based on wind speed.
     """
 
-    def __init__(self, wind_turbines: List[Dict], model_file: str = None, retrain_model: bool = False,
-                 dataset_file: str = None):
+    def __init__(self,
+                 wind_turbines: List[Dict],
+                 listeners: List[Dict] = None,
+                 model_file: str = None,
+                 retrain_model: bool = False,
+                 dataset_file: str = None
+    ):
         """
         Initializes the WindTurbines object.
         :param model_file: if specified, another model than the default one is used.
@@ -191,15 +227,16 @@ class WindTurbines:
         :type dataset_file: str
         """
 
+        self.ws = None
         self.wind_turbines = check_wind_turbine_specs(wind_turbines)
+        self.listeners = check_listeners(listeners)
 
         if retrain_model:
             self.model, self.noise_cols = train_wind_turbine_model(dataset_file)
         else:
             self.model, self.noise_cols = load_model(model_file)
 
-        self.results = self.predict_noise()
-        self.wind_speed = None
+        self.noise = self.predict_noise()
 
     def predict_noise(self) -> DataArray:
         """Predicts noise levels based on turbine specifications for multiple turbines.
@@ -277,16 +314,25 @@ class WindTurbines:
         plt.tight_layout()
         plt.show()
 
-    def fetch_wind_speeds(self, start_year=None, end_year=None):
+    def fetch_wind_speeds(self, start_year=None, end_year=None, debug=False):
 
         start_year = start_year or 2016
-        end_year = end_year or 2018
+        end_year = end_year or 2017
 
-        ws = WindSpeed(
+        self.ws = WindSpeed(
             wind_turbines=self.wind_turbines,
             start_year=start_year,
-            end_year=end_year
+            end_year=end_year,
+            debug=debug,
         )
 
-        self.wind_speed = ws.download_data()
-        self.mean_directional_wind_speed = calculate_mean_speed(self.wind_speed)
+    def plot_wind_rose(self):
+        self.ws.create_wind_roses()
+
+    def fetch_noise_map(self):
+
+        self.noise_map = NoiseMap(
+            wind_turbines=self.wind_turbines,
+            noise=self.noise,
+            listeners=self.listeners,
+        )

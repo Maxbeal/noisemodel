@@ -17,6 +17,9 @@ dev/sample/inventories/*
 *.xml
 *.iml
 
+# Secrets #
+secrets.json
+
 # Compiled source #
 ###################
 *.com

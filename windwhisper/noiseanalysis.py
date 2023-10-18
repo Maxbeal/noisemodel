@@ -322,7 +322,7 @@ class NoiseAnalysis:
                     distance = haversine(observation_point, turbine['position'], unit=Unit.METERS)
                     intensity_level = self.noise_map.calculate_sound_intensity_level(dBsource, distance)
                     total_intensity_level += intensity_level
-                dB_total = self.noise_map.convert_intensity_level_into_dB(total_intensity_level)
+                dB_total = self.noise_map.convert_intensity_level_into_decibels(total_intensity_level)
                 results[observation_point] = dB_total
 
             wind_speed_results[wind_speed] = results

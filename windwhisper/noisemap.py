@@ -1,12 +1,7 @@
 import numpy as np
-import math
-import matplotlib.pyplot as plt
-from typing import List, Dict, Optional, Tuple
-from .windturbines import WindTurbines
+from typing import List, Dict, Tuple, Any
 from haversine import haversine, Unit
 import folium
-from IPython.core.display import HTML
-from .windspeed import WindSpeed
 import ipywidgets as widgets
 from IPython.display import display
 import osmnx as ox
@@ -14,12 +9,12 @@ import geopandas as gpd
 import requests
 from shapely.geometry import LineString, Point
 import matplotlib.pyplot as plt
-import folium.plugins as plugins
-import pandas as pd
+import xarray as xr
 
-# Votre clé API Google
-GOOGLE_ELEVATION_API_KEY = "AIzaSyDdmjBS36KrwL-pDYBANiPM1mky_Jd15OQ"
+from . import SECRETS
 
+# API Google key
+GOOGLE_ELEVATION_API_KEY = SECRETS["GOOGLE_ELEVATION_API_KEY"]
 
 
 class NoiseMap:
@@ -33,23 +28,27 @@ class NoiseMap:
         wind_turbines (list): List of wind turbines with their specifications and noise levels.
     """
 
-    def __init__(self, wind_turbines: List[Dict], wind_turbine_model: WindTurbines, alpha: float = 2.0, wind_speed: float = 8.0):
+    def __init__(self, wind_turbines: List[Dict], noise: xr.DataArray, listeners: List[Dict], alpha: float = 2.0):
         """
         Initialize the NoiseMap class.
 
         Parameters:
             wind_turbines (List[Dict]): List of wind turbines with their specifications.
-            wind_turbine_model (WindTurbines): Model to predict noise levels.
+            wind_speed (WindTurbines): Noise levels asa function of wind speed.
             alpha (float, optional): Air absorption coefficient. Defaults to 2.0.
         """
         self.alpha = alpha / 1000  # Convert alpha from dB/km to dB/m
         self.W0 = 1e-12
         self.I0 = 1e-12
-        
-        self.wind_turbines = wind_turbines
-        self.wind_turbine_model = wind_turbine_model
 
-    def calculate_sound_intensity_level(self, dBsource: float, distance: float) -> float:
+        self.wind_turbines = wind_turbines
+        self.noise = noise
+        self.listeners = listeners
+        self.individual_noise, self.total_noise = self.superpose_several_wind_turbine_sounds()
+
+        self.generate_noise_map()
+
+    def calculate_sound_intensity_level(self, dBsource: [float, np.array], distance: [float, np.array]) -> np.array:
         """
         Calculates sound intensity level at a given distance from the source.
 
@@ -60,105 +59,121 @@ class NoiseMap:
         Returns:
             float: Sound intensity level at the given distance.
         """
-        if distance == 0:
-            return float('inf')  # return infinity if distance is zero
+
+        if not isinstance(dBsource, np.ndarray):
+            dBsource = np.array(dBsource)
+
+        if not isinstance(distance, np.ndarray):
+            distance = np.array(distance)
+
+        # replace zeros with infinity to avoid division by zero
+        distance[distance == 0] = np.inf
         wattsource = (10 ** (dBsource / 10)) * self.W0
-        intensity_level = wattsource / (4 * math.pi * distance ** 2)
+        intensity_level = wattsource / (4 * np.pi * distance ** 2)
+
         # apply air absorption
-        intensity_level = 10 ** (-self.alpha * distance / 10) * intensity_level
-        return intensity_level #given in W 
+        intensity_level *= 10 ** (-self.alpha * distance / 10)
 
-    def convert_intensity_level_into_dB(self, intensity_level: float) -> float:
-        """Converts a sound intensity level into decibels."""
-        return 10 * math.log10(intensity_level / self.I0)
+        # given in W
+        return intensity_level
 
-    def superpose_several_wind_turbine_sounds(self, observation_points: List[Tuple[float, float]], wind_speed: float) -> Dict[Tuple[float, float], float]:
-        """Superposes sounds from multiple wind turbines at specific observation points based on the given wind speed."""
+    def convert_intensity_level_into_decibels(self, intensity_level: [float, np.array]) -> float:
+        """
+        Converts a sound intensity level into decibels.
+        """
+        if not isinstance(intensity_level, np.ndarray):
+            intensity_level = np.array(intensity_level)
 
-        noise_predictions = self.wind_turbine_model.predict_noise_at_wind_speed(self.wind_turbines, wind_speed)
-        results = {}
+        return 10 * np.log10(intensity_level / self.I0)
 
-        for observation_point in observation_points:
-            total_intensity_level = 0
-            for turbine in self.wind_turbines:
-                turbine_name = turbine.get('name')
-                dBsource = noise_predictions[turbine_name][f"{wind_speed:.1f}m/s"]
-                distance = haversine(observation_point, turbine['position'], unit=Unit.METERS)
-                intensity_level = self.calculate_sound_intensity_level(dBsource, distance)
-                total_intensity_level += intensity_level
-            dB_total = self.convert_intensity_level_into_dB(total_intensity_level)
-            results[observation_point] = dB_total
+    def superpose_several_wind_turbine_sounds(self) -> tuple[list[dict[str, Any]], float]:
+        """
+        Superposes sounds from multiple wind turbines at
+        specific observation points based on the given wind speed.
+        """
 
-        return results
+        pairs = [
+            {
+                "turbine_name": turbine["name"],
+                "turbine_position": turbine["position"],
+                "listener_name": listener["name"],
+                "listener_position": listener["position"],
+                "distance": haversine(turbine["position"], listener["position"], unit=Unit.METERS)
+            }
+            for turbine in self.wind_turbines
+            for listener in self.listeners
+        ]
 
-    
-    def generate_noise_map(self, observation_points: List[Tuple[float, float]], wind_speed: float):
-        """Generates a noise map for the wind turbines and observation points based on the given wind speed."""
+        # add intensity level for each turbine
+        for pair in pairs:
+            noise = self.noise.sel(turbine=pair["turbine_name"])
+            intensity_level = self.calculate_sound_intensity_level(noise, pair["distance"])
+            pair["intensity_level"] = intensity_level
 
-        # Get the noise predictions for the given wind speed
-        noise_predictions = self.wind_turbine_model.predict_noise_at_wind_speed(self.wind_turbines, wind_speed)
+        total_intensity_level = self.convert_intensity_level_into_decibels(
+            sum(pair["intensity_level"] for pair in pairs))
+
+        return pairs, total_intensity_level
+
+    def generate_noise_map(self):
+        """
+        Generates a noise map for the wind turbines
+        and observation points based on the given wind speed.
+        """
 
         # Determine the bounding box for the map
-        lat_min = min(turbine['position'][0] for turbine in self.wind_turbines)
-        lat_max = max(turbine['position'][0] for turbine in self.wind_turbines)
-        lon_min = min(turbine['position'][1] for turbine in self.wind_turbines)
-        lon_max = max(turbine['position'][1] for turbine in self.wind_turbines)
-        delay = 1/250
+        lat_min = min(turbine['turbine_position'][0] for turbine in self.individual_noise)
+        lat_max = max(turbine['turbine_position'][0] for turbine in self.individual_noise)
+        lon_min = min(turbine['turbine_position'][1] for turbine in self.individual_noise)
+        lon_max = max(turbine['turbine_position'][1] for turbine in self.individual_noise)
+        delay = 1 / 250
 
         # Adjust the map size to include observation points
-        for point in observation_points:
-            lat_min = min(lat_min, point[0]) - delay
-            lat_max = max(lat_max, point[0]) + delay
-            lon_min = min(lon_min, point[1]) - delay
-            lon_max = max(lon_max, point[1]) + delay
+        for point in self.individual_noise:
+            lat_min = min(lat_min, point["listener_position"][0]) - delay
+            lat_max = max(lat_max, point["listener_position"][0]) + delay
+            lon_min = min(lon_min, point["listener_position"][1]) - delay
+            lon_max = max(lon_max, point["listener_position"][1]) + delay
 
-        LAT, LON = np.meshgrid(np.linspace(lat_min, lat_max, 100), np.linspace(lon_min, lon_max, 100))
-        Z = np.zeros_like(LAT)
+        LAT, LON = np.meshgrid(
+            np.linspace(lat_min, lat_max, 100),
+            np.linspace(lon_min, lon_max, 100)
+        )
 
-        for turbine in self.wind_turbines:
-            distances = np.vectorize(lambda lat, lon: haversine((lat, lon), turbine['position'], unit=Unit.METERS))(LAT, LON)
+        # Calculate the noise level at each point
+        positions = [point["position"] for point in self.wind_turbines]
 
-            # Use the predicted noise level for the turbine at the given wind speed
-            turbine_name = turbine.get('name')
-            dBsource = noise_predictions[turbine_name][f"{wind_speed:.1f}m/s"]
+        distances = np.array([
+            haversine(point1=(lat, lon), point2=position, unit=Unit.METERS)
+            for lat, lon in zip(LAT.flatten(), LON.flatten())
+            for position in positions
+        ]).reshape(LAT.shape[0], LAT.shape[1], len(positions))
 
-            intensity_source = 10 ** (dBsource / 10) * 1e-12
-            intensity = intensity_source / (4 * np.pi * distances ** 2)
-            Z += intensity
+        intensity = 10 ** (self.noise / 10) * 1e-12
 
-        Z = 10 * np.log10(Z / 1e-12)
+        distance_noise = (4 * np.pi * distances ** 2)
 
-        self.LAT, self.LON, self.Z = LAT, LON, Z  # Store the values in the object's attributes
+        intensity_distance = intensity.values / distance_noise[..., None]
 
+        Z = 10 * np.log10(intensity_distance.sum(axis=2) / 1e-12)
 
-    def plot_noise_map(self, observation_points: List[Tuple[float, float]]):
-        """Plots the noise map with wind turbines and observation points."""
-        plt.figure(figsize=(10, 6))
-        
-        # Define contour levels starting from 35 dB
-        contour_levels = [35, 40, 45, 50, 55, 60]
-        
-        plt.contourf(self.LON, self.LAT, self.Z, levels=contour_levels, cmap='RdYlBu_r')
-        plt.colorbar(label='Noise Level (dB)')
-        plt.title('Wind Turbine Noise Contours')
-        plt.xlabel('Longitude')
-        plt.ylabel('Latitude')
+        # create xarray to store Z
+        Z = xr.DataArray(
+            data=Z,
+            dims=("lat", "lon", "wind_speed"),
+            coords={
+                "lat": LAT[0],
+                "lon": LON[0],
+                "wind_speed": self.noise.wind_speed
+            }
+        )
 
-        # Plot wind turbines
-        for turbine in self.wind_turbines:
-            plt.plot(*turbine['position'][::-1], 'ko')  # Plot longitude before latitude
+        # Store the values for later use
+        self.LAT, self.LON, self.Z = LAT, LON, Z
 
-        # Plot observation points
-        for point in observation_points:
-            plt.plot(*point[::-1], 'ro')
-
-        plt.grid(True)
-        plt.show()
-
-    def generate_and_plot_noise_map(self, observation_points: List[Tuple[float, float]]):
+    def plot_noise_map(self):
         """
-        Generates and plots a noise map for the wind turbines and observation points based on the desired noise level.
-        Allows the user to choose the wind speed using a cursor.
+        Plots the noise map with wind turbines and observation points.
         """
 
         # Create a wind speed slider for user interaction
@@ -168,51 +183,24 @@ class NoiseMap:
             max=12.0,
             step=1.0,
             description='Wind Speed (m/s):',
-            continuous_update=False
+            continuous_update=True
         )
 
         @widgets.interact(wind_speed=wind_speed_slider)
         def interactive_plot(wind_speed):
-            # Get the noise predictions for the given wind speed
-            noise_predictions = self.wind_turbine_model.predict_noise_at_wind_speed(self.wind_turbines, wind_speed)
-
-            # Calculate the combined noise level at each observation point
-            noise_levels = self.superpose_several_wind_turbine_sounds(observation_points, wind_speed)
-
-            # Generate the noise map data
-            lat_min = min(turbine['position'][0] for turbine in self.wind_turbines)
-            lat_max = max(turbine['position'][0] for turbine in self.wind_turbines)
-            lon_min = min(turbine['position'][1] for turbine in self.wind_turbines)
-            lon_max = max(turbine['position'][1] for turbine in self.wind_turbines)
-            delay = 1/250
-
-            # Adjust the map size to include observation points
-            for point in observation_points:
-                lat_min = min(lat_min, point[0]) - delay
-                lat_max = max(lat_max, point[0]) + delay
-                lon_min = min(lon_min, point[1]) - delay
-                lon_max = max(lon_max, point[1]) + delay
-
-            LAT, LON = np.meshgrid(np.linspace(lat_min, lat_max, 100), np.linspace(lon_min, lon_max, 100))
-            Z = np.zeros_like(LAT)
-
-            for turbine in self.wind_turbines:
-                distances = np.vectorize(lambda lat, lon: haversine((lat, lon), turbine['position'], unit=Unit.METERS))(LAT, LON)
-
-                # Use the predicted noise level for the turbine at the given wind speed
-                turbine_name = turbine.get('name')
-                dBsource = noise_predictions[turbine_name][f"{wind_speed:.1f}m/s"]
-
-                intensity_source = 10 ** (dBsource / 10) * 1e-12
-                intensity = intensity_source / (4 * np.pi * distances ** 2)
-                Z += intensity
-
-            Z = 10 * np.log10(Z / 1e-12)
-
-            # Plot the noise map
             plt.figure(figsize=(10, 6))
-            contour_levels = np.arange(35, 60, 5)  # Define contour levels starting from 35 dB
-            plt.contourf(LON, LAT, Z, levels=contour_levels, cmap='RdYlBu_r')
+
+            # Define contour levels starting from 35 dB
+            contour_levels = [35, 40, 45, 50, 55, 60]
+
+            plt.contourf(
+                self.LAT,
+                self.LON,
+                self.Z.interp(
+                    wind_speed=wind_speed,
+                    kwargs={"fill_value": "extrapolate"}
+                ), levels=contour_levels, cmap='RdYlBu_r'
+            )
             plt.colorbar(label='Noise Level (dB)')
             plt.title('Wind Turbine Noise Contours')
             plt.xlabel('Longitude')
@@ -220,21 +208,24 @@ class NoiseMap:
 
             # Plot wind turbines
             for turbine in self.wind_turbines:
-                plt.plot(*turbine['position'][::-1], 'ko')  # Plot longitude before latitude
+                plt.plot(*turbine['position'], 'ko')
+                # add label next to it, add a small offset to avoid overlapping
+                plt.text(turbine['position'][0] + 0.002, turbine['position'][1] + 0.002, turbine['name'])
 
             # Plot observation points
-            for point in observation_points:
-                plt.plot(*point[::-1], 'ro')
+            for point in self.listeners:
+                plt.plot(*point["position"], 'ro')
+                # add label next to it
+                plt.text(point["position"][0] + 0.002, point["position"][1] + 0.002, point["name"])
 
             plt.grid(True)
             plt.show()
 
-        return interactive_plot
-
-        
-    
-    def display_turbines_on_map(self, observation_points: List[Tuple[float, float]] = []):
-        """Displays the wind turbines and observation points on a real map using their latitude and longitude."""
+    def display_turbines_on_map(self):
+        """
+        Displays the wind turbines and observation points
+        on a real map using their latitude and longitude.
+        """
 
         # Get the average latitude and longitude to center the map
         avg_lat = sum(turbine['position'][0] for turbine in self.wind_turbines) / len(self.wind_turbines)
@@ -252,9 +243,9 @@ class NoiseMap:
             ).add_to(m)
 
         # Add markers for the observation points
-        for observation_point in observation_points:
+        for observation_point in self.listeners:
             folium.Marker(
-                location=observation_point,
+                location=observation_point["position"],
                 tooltip="Observation Point",
                 icon=folium.Icon(icon="star", color="red")
             ).add_to(m)
@@ -262,18 +253,10 @@ class NoiseMap:
         # Display the map
         display(m)
 
-
-
-    def calculate_noise_at_position(self, observation_point: Tuple[float, float]) -> float:
-        """Calculates the noise level at a given observation point."""
-        return self.superpose_several_wind_turbine_sounds(observation_point)
-
-
-
-
     def get_landuse_between_points(self, turbine_name, observation_point):
         # Find the position of the turbine by its name
-        turbine_position = next((turbine["position"] for turbine in self.wind_turbines if turbine["name"] == turbine_name), None)
+        turbine_position = next(
+            (turbine["position"] for turbine in self.wind_turbines if turbine["name"] == turbine_name), None)
         if not turbine_position:
             raise ValueError(f"No turbine found with the name {turbine_name}")
 
@@ -284,7 +267,6 @@ class NoiseMap:
         # Fetch land use data
         landuse = ox.features_from_bbox(north, south, east, west, tags={'landuse': True})
         return landuse
-
 
     def plot_landuse_for_turbines_and_observation_points(self, wind_turbines, observation_points):
         # Extract turbine positions and combine with observation points
@@ -297,7 +279,8 @@ class NoiseMap:
         # Extract latitude and longitude for bounding box calculation
         all_lats, all_lons = zip(*all_points)
         margin = 0.01
-        bbox = dict(north=max(all_lats) + margin, south=min(all_lats) - margin, east=max(all_lons) + margin, west=min(all_lons) - margin)
+        bbox = dict(north=max(all_lats) + margin, south=min(all_lats) - margin, east=max(all_lons) + margin,
+                    west=min(all_lons) - margin)
 
         # Fetch landuse features and create a color map for unique landuse types
         landuse = ox.features_from_bbox(**bbox, tags={'landuse': True})
@@ -307,20 +290,24 @@ class NoiseMap:
 
         # Plot landuse, turbines, and observation points
         ax = landuse.to_crs(epsg=3857).plot(color=landuse['landuse'].map(color_map), figsize=(12, 12))
-        gdf_points.iloc[:len(turbine_positions)].to_crs(epsg=3857).plot(ax=ax, color='blue', markersize=100, label='Éoliennes')
-        gdf_points.iloc[len(turbine_positions):].to_crs(epsg=3857).plot(ax=ax, color='red', markersize=100, label='Points d\'observation')
+        gdf_points.iloc[:len(turbine_positions)].to_crs(epsg=3857).plot(ax=ax, color='blue', markersize=100,
+                                                                        label='Éoliennes')
+        gdf_points.iloc[len(turbine_positions):].to_crs(epsg=3857).plot(ax=ax, color='red', markersize=100,
+                                                                        label='Points d\'observation')
 
         # Plot lines between turbine positions and observation points
-        lines = [LineString([turbine[::-1], observation[::-1]]) for turbine in turbine_positions for observation in observation_points]
+        lines = [LineString([turbine[::-1], observation[::-1]]) for turbine in turbine_positions for observation in
+                 observation_points]
         gpd.GeoSeries(lines, crs="EPSG:4326").to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=1)
 
         # Create legend
-        patches = [plt.Line2D([0], [0], marker='o', color='w', label=landuse_type, markersize=10, markerfacecolor=color_map[landuse_type]) for landuse_type in landuse_types]
+        patches = [plt.Line2D([0], [0], marker='o', color='w', label=landuse_type, markersize=10,
+                              markerfacecolor=color_map[landuse_type]) for landuse_type in landuse_types]
         ax.legend(handles=patches + [plt.Line2D([0], [0], marker='o', color='blue', label='Éoliennes', markersize=10),
-                                    plt.Line2D([0], [0], marker='o', color='red', label='Points d\'observation', markersize=10)],
+                                     plt.Line2D([0], [0], marker='o', color='red', label='Points d\'observation',
+                                                markersize=10)],
                   title="Légende")
         plt.show()
-
 
     def get_altitudes_between_points(self, point1, point2, num_samples=100):
         latitudes = np.linspace(point1[0], point2[0], num_samples)
@@ -339,7 +326,6 @@ class NoiseMap:
 
         return altitudes
 
-
     def plot_relief_between_points(self, wind_turbines, observation_points):
         for turbine in wind_turbines:
             turbine_position = turbine["position"]
@@ -351,22 +337,21 @@ class NoiseMap:
                 plt.xlabel("Points intermédiaires")
                 plt.ylabel("Altitude (m)")
                 plt.show()
-                
-                
 
-    def superpose_several_wind_turbine_sounds2(self, observation_points: List[Tuple[float, float]]) -> Dict[Tuple[float, float], float]:
-            """Superposes sounds from multiple wind turbines at specific observation points."""
+    def superpose_several_wind_turbine_sounds2(self, observation_points: List[Tuple[float, float]]) -> Dict[
+        Tuple[float, float], float]:
+        """Superposes sounds from multiple wind turbines at specific observation points."""
 
-            results = {}
+        results = {}
 
-            for observation_point in observation_points:
-                total_intensity_level = 0
-                for turbine in self.wind_turbines:
-                    dBsource = turbine['noise_level']
-                    distance = haversine(observation_point, turbine['position'], unit=Unit.METERS)
-                    intensity_level = self.calculate_sound_intensity_level(dBsource, distance)
-                    total_intensity_level += intensity_level
-                dB_total = self.convert_intensity_level_into_dB(total_intensity_level)
-                results[observation_point] = dB_total
+        for observation_point in observation_points:
+            total_intensity_level = 0
+            for turbine in self.wind_turbines:
+                dBsource = turbine['noise_level']
+                distance = haversine(observation_point, turbine['position'], unit=Unit.METERS)
+                intensity_level = self.calculate_sound_intensity_level(dBsource, distance)
+                total_intensity_level += intensity_level
+            dB_total = self.convert_intensity_level_into_decibels(total_intensity_level)
+            results[observation_point] = dB_total
 
-            return results
+        return results
