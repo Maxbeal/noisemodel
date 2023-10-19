@@ -52,7 +52,8 @@ setup(
         "numpy",
         "ipywidgets",
         "osmnx",
-        "skops"
+        "skops",
+        "matplotlib",
     ],
     url="https://github.com/MaximeBalandret/noisemodel",
     description="Noise modelling of wind turbines",

@@ -178,12 +178,19 @@ class WindSpeed:
 
         n_rows = int(np.ceil(len(self.wind_turbines) / 2))
         # Create the figure and axes
-        fig, axs = plt.subplots(n_rows, 2, figsize=(10, 5 * n_rows))
+        fig, axs = plt.subplots(nrows=n_rows, ncols=2, figsize=(10, 5 * n_rows))
 
         for i, turbine in enumerate(self.wind_turbines):
+            # Convert 1D index to 2D index
+            row, col = np.unravel_index(i, (n_rows, 2))
             # Hide the original axes
-            axs[i].axis('off')
+            axs[row, col].axis('off')
             # Create a wind rose for this turbine
-            self._create_wind_rose(turbine, axs[i])
+            self._create_wind_rose(turbine, axs[row, col])
+
+        # remove empty subplots
+        for i in range(len(self.wind_turbines), n_rows * 2):
+            row, col = np.unravel_index(i, (n_rows, 2))
+            fig.delaxes(axs[row, col])
 
         plt.show()

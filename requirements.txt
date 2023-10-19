@@ -9,3 +9,4 @@ numpy
 ipywidgets
 osmnx
 skops
+matplotlib

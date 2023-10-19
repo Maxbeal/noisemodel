@@ -6,6 +6,7 @@ build/
 dist/
 data/export/
 data/logs/
+data/*.skops
 *.eggs/
 */data/logs/*
 */data/matrices/*
@@ -18,10 +19,8 @@ dev/sample/inventories/*
 *.iml
 
 # Secrets #
-secrets.json
+./secrets.json
 
-# backup
-data/*.skops
 
 # Compiled source #
 ###################
