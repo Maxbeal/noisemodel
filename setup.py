@@ -51,7 +51,8 @@ setup(
         "scikit-learn",
         "numpy",
         "ipywidgets",
-        "osmnx"
+        "osmnx",
+        "skops"
     ],
     url="https://github.com/MaximeBalandret/noisemodel",
     description="Noise modelling of wind turbines",

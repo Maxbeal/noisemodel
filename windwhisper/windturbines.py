@@ -91,10 +91,10 @@ def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, Lis
         print(f"Mean Squared Error for {column}: {mse[i]}")
 
     # Save the trained model for future use
-    sio.dump(obj=(model, noise_cols), file=f"{Path(DATA_DIR / file_path.stem)}.skops")
+    sio.dump(obj=(model, noise_cols), file=f"{Path(DATA_DIR / 'default_model')}.skops")
 
     # print the location of the saved model
-    print(f"Trained model saved to {Path(DATA_DIR / file_path.stem)}.skops")
+    print(f"Trained model saved to {Path(DATA_DIR / 'default_model')}.skops")
 
     return model, noise_cols
 
@@ -227,6 +227,7 @@ class WindTurbines:
         :type dataset_file: str
         """
 
+        self.noise_map = None
         self.ws = None
         self.wind_turbines = check_wind_turbine_specs(wind_turbines)
         self.listeners = check_listeners(listeners)
@@ -234,14 +235,16 @@ class WindTurbines:
         if retrain_model:
             self.model, self.noise_cols = train_wind_turbine_model(dataset_file)
         else:
-            self.model, self.noise_cols = load_model(model_file)
+            try:
+                self.model, self.noise_cols = load_model(model_file)
+            except:
+                self.model, self.noise_cols = train_wind_turbine_model(dataset_file)
 
         self.noise = self.predict_noise()
 
     def predict_noise(self) -> DataArray:
         """Predicts noise levels based on turbine specifications for multiple turbines.
 
-        :param wind_turbines: List of dictionaries containing turbine specifications.
         :return: A DataFrame containing the noise predictions for each turbine.
         """
 
@@ -289,7 +292,7 @@ class WindTurbines:
 
         wind_speed = np.clip(wind_speed, 0, 25)
 
-        results = self.results.interp(
+        results = self.noise.interp(
             wind_speed=wind_speed,
             kwargs={"fill_value": "extrapolate"},
         ).clip(0, None)

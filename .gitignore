@@ -20,6 +20,9 @@ dev/sample/inventories/*
 # Secrets #
 secrets.json
 
+# backup
+data/*.skops
+
 # Compiled source #
 ###################
 *.com
