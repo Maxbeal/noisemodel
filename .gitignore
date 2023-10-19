@@ -20,6 +20,7 @@ dev/sample/inventories/*
 
 # Secrets #
 ./secrets.json
+secrets.json
 
 
 # Compiled source #
