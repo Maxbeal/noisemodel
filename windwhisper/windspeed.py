@@ -11,6 +11,12 @@ import numpy as np
 from typing import Dict
 from pathlib import Path
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+import requests
+import json
+import netCDF4
+from scipy.stats import weibull_min
+import seaborn as sns
+
 
 # path to tests/fixtures folder, with test being in the root folder
 FIXTURE_DIR = str(Path(__file__).parent.parent / 'tests' / 'fixtures')
@@ -24,6 +30,8 @@ class WindSpeed:
         self.wind_turbines = wind_turbines
         self.start_year = start_year
         self.end_year = end_year
+        self.weibull_params = {}
+
 
         if debug is True:
             # we unpickle the data to save time
@@ -194,3 +202,57 @@ class WindSpeed:
             fig.delaxes(axs[row, col])
 
         plt.show()
+        
+
+
+    def download_weibull_coefficients(self):
+            weibull_data = {}
+
+            for turbine in self.wind_turbines:
+                latitude, longitude = turbine["position"]
+                url = (f"https://wps.neweuropeanwindatlas.eu/api/microscale-atlas/v1/get-data-point"
+                       f"?latitude={latitude}&longitude={longitude}&height=100"
+                       f"&variable=weib_A_combined&variable=weib_k_combined")
+
+                try:
+                    response = requests.get(url, timeout=20)
+                    response.raise_for_status()
+                except requests.RequestException as e:
+                    print(f"Request failed: {e}")
+                    continue
+
+                with netCDF4.Dataset("inmemory.nc", memory=response.content) as ds:
+                    # Assuming 'weib_A_combined' and 'weib_k_combined' are variable names in the dataset
+                    A = ds['weib_A_combined'][:]
+                    k = ds['weib_k_combined'][:]
+
+                    weibull_data[turbine["name"]] = {"A": A, "k": k}
+                    
+            # Set the weibull_params attribute
+            self.weibull_params = weibull_data
+            return weibull_data
+
+    def plot_weibull_wind_speed_distribution(self):
+        wind_speeds = np.linspace(0, 25, 1000)  # Array of wind speeds from 0 to 25 m/s
+
+        # Set the aesthetic style of the plots
+        sns.set_style("whitegrid")
+
+        for turbine, params in self.weibull_params.items():
+            A = params['A'].data[0]
+            k = params['k'].data[0]
+
+            # Calculate the PDF values for each wind speed
+            pdf_values = weibull_min.pdf(wind_speeds, c=k, scale=A)
+
+            # Calculate the number of hours per year for each wind speed
+            hours_per_year = pdf_values * (wind_speeds[1] - wind_speeds[0]) * 8760
+
+            # Create the plot
+            plt.figure(figsize=(10, 5))
+            plt.plot(wind_speeds, hours_per_year, label=f'Turbine: {turbine}\nA={A:.2f}, k={k:.2f}')
+            plt.xlabel('Wind Speed (m/s)')
+            plt.ylabel('Hours per Year')
+            plt.title('Wind Speed Distribution')
+            plt.legend()
+            plt.show()

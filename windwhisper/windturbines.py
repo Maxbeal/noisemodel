@@ -318,7 +318,23 @@ class WindTurbines:
         plt.show()
 
     def fetch_wind_speeds(self, start_year=None, end_year=None, debug=False):
+        """
+            Fetches wind speeds for a given range of years and stores the data in the 
+            WindSpeed instance.
 
+            Args:
+                start_year (int, optional): The starting year for data fetching. If not 
+                                             provided, defaults to 2016.
+                end_year (int, optional): The ending year for data fetching. If not 
+                                           provided, defaults to 2017.
+                debug (bool, optional): A flag used to control the data loading mechanism in 
+                                         the WindSpeed instance. When True, data is loaded 
+                                         from a local file, otherwise data is downloaded from 
+                                         an external source. Default is False.
+
+            Returns:
+                None
+            """
         start_year = start_year or 2016
         end_year = end_year or 2017
 
