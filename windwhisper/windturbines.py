@@ -307,11 +307,22 @@ class WindTurbines:
         """
 
         predictions = self.predict_noise_at_wind_speed(np.arange(3, 12, 0.5))
-        predictions.to_dataframe("val").unstack()["val"].T.plot(figsize=(10, 6))
+        df = predictions.to_dataframe("val").unstack()["val"].T
+
+        # Different line styles and markers
+        line_styles = ['-', '--', '-.', ':']
+        markers = ['o', '^', 's', 'p', '*', '+', 'x', 'D']
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        for i, col in enumerate(df.columns):
+            style = line_styles[i % len(line_styles)]
+            marker = markers[i % len(markers)]
+            ax.plot(df.index, df[col], linestyle=style, marker=marker, label=col)
 
         plt.title('Noise vs Wind Speed')
         plt.xlabel('Wind Speed (m/s)')
-        plt.ylabel('Noise (dB)')
+        plt.ylabel('Noise (dBa)')
         plt.legend()
         plt.grid(True)
         plt.tight_layout()

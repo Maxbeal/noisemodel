@@ -103,7 +103,8 @@ class NoiseMap:
             for turbine in self.wind_turbines
             for listener in self.listeners
         ]
-
+        print(pairs)
+        
         # add intensity level for each turbine
         for pair in pairs:
             noise = self.noise.sel(turbine=pair["turbine_name"])
@@ -114,7 +115,36 @@ class NoiseMap:
             sum(pair["intensity_level"] for pair in pairs))
 
         return pairs, total_intensity_level
+    
+    def calculate_dB_at_distance(self,dBsource,distance):
+        intensity_level_db = dBsource - 20 * np.log10(distance) - 11 - self.alpha * distance
+        return intensity_level_db
 
+        
+    def superpose_several_wind_turbine_sounds_in_dB(self):
+       
+        pairs = [
+            {
+                "turbine_name": turbine["name"],
+                "turbine_position": turbine["position"],
+                "listener_name": listener["name"],
+                "listener_position": listener["position"],
+                "distance": haversine(turbine["position"], listener["position"], unit=Unit.METERS)
+            }
+            for turbine in self.wind_turbines
+            for listener in self.listeners
+        ]
+        
+        # add dB level for each turbine
+        for pair in pairs:
+            noise = self.noise.sel(turbine=pair["turbine_name"])
+            dB_level = self.calculate_dB_at_distance(noise, pair["distance"])
+            pair["intensity_level"] = dB_level
+            
+        total_intensity_level_db = 10 * np.log10(sum(10 ** (pair["intensity_level_db"] / 10) for pair in pairs))
+
+        return pairs, total_intensity_level_db 
+        
     def generate_noise_map(self):
         """
         Generates a noise map for the wind turbines

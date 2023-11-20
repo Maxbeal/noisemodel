@@ -52,7 +52,7 @@ class WindSpeed:
                f"01-01T00:00:00&dt_stop={self.end_year}-12-31T23:30:00")
 
         try:
-            response = requests.get(url, timeout=20)
+            response = requests.get(url, timeout=25)
         except Timeout as e:
             raise Timeout(f"The request to wps.neweuropeanwindatlas.eu has timed out.") from None
 
@@ -70,7 +70,7 @@ class WindSpeed:
         dataframes = {}
 
         # Use ThreadPoolExecutor to download data concurrently
-        with ThreadPoolExecutor(max_workers=5) as executor:  # Adjust max_workers as needed
+        with ThreadPoolExecutor(max_workers=2) as executor:  # Adjust max_workers as needed
             futures = [executor.submit(self._download_single_turbine_data, turbine) for turbine in self.wind_turbines]
 
             # Wait for all futures to complete
