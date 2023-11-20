@@ -25,6 +25,7 @@ from xarray import DataArray
 from . import DATA_DIR
 from .windspeed import WindSpeed
 from .noisemap import NoiseMap
+from .noiseanalysis import NoiseAnalysis
 
 
 def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, List[str]]:
@@ -231,6 +232,7 @@ class WindTurbines:
         self.ws = None
         self.wind_turbines = check_wind_turbine_specs(wind_turbines)
         self.listeners = check_listeners(listeners)
+        self.na = None
 
         if retrain_model:
             self.model, self.noise_cols = train_wind_turbine_model(dataset_file)
@@ -365,4 +367,13 @@ class WindTurbines:
             wind_turbines=self.wind_turbines,
             noise=self.noise,
             listeners=self.listeners,
+        )
+
+    def analyze_noise(self):
+        self.na = NoiseAnalysis(
+            wind_speed=self.ws.wind_speed,
+            noise=self.noise,
+            noise_map=self.noise_map,
+            wind_turbines=self.wind_turbines,
+            listeners=self.listeners
         )

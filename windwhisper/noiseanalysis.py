@@ -1,26 +1,30 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
-from .windspeed import WindSpeed
-from .windturbines import WindTurbines
-from .noisemap import NoiseMap
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Dict
 from haversine import haversine, Unit
 
+MAX_WIND_SPEED = 30  # Assuming max wind speed is 30 m/s
 
 class NoiseAnalysis:
-    MAX_WIND_SPEED = 30  # Assuming max wind speed is 30 m/s
 
-    def __init__(self, wind_module: WindSpeed, turbine_model: WindTurbines, noise_map: NoiseMap, wind_turbines: List[Dict]):
-        self.wind_data = wind_module.dataframes
-        self.turbine_model = turbine_model
+    def __init__(
+            self,
+            wind_speed,
+            noise,
+            noise_map,
+            wind_turbines,
+            listeners
+    ):
+        self.wind_speed = wind_speed.to_array()
+        self.noise = noise
         self.noise_map = noise_map
         self.turbines = wind_turbines
+        self.listeners = listeners
         self.detailed_prediction_cache = None  # Cache for detailed_no
         self.noise_dataframes_cache = None  # Cache for get_noise_dataframes
-        self.wind_module = wind_module
 
     def calculate_annual_hours_from_dataframe(self) -> Dict[str, Dict[str, float]]:
         results = {}
