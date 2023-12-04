@@ -303,6 +303,9 @@ class WindTurbines:
 
         return results
 
+
+
+
     def plot_noise_curve(self):
         """
         Plots noise levels for all wind speeds between 3 and 12 m/s.

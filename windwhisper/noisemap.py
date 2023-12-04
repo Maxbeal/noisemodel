@@ -10,6 +10,7 @@ import requests
 from shapely.geometry import LineString, Point
 import matplotlib.pyplot as plt
 import xarray as xr
+import math
 
 from . import SECRETS
 
@@ -20,11 +21,9 @@ GOOGLE_ELEVATION_API_KEY = SECRETS["GOOGLE_ELEVATION_API_KEY"]
 class NoiseMap:
     """
     The NoiseMap class is responsible for generating and displaying noise maps based on sound intensity levels.
-   
+
     Attributes:
         alpha (float): Air absorption coefficient.
-        W0 (float): Reference power.
-        I0 (float): Reference intensity.
         wind_turbines (list): List of wind turbines with their specifications and noise levels.
     """
 
@@ -38,113 +37,58 @@ class NoiseMap:
             alpha (float, optional): Air absorption coefficient. Defaults to 2.0.
         """
         self.alpha = alpha / 1000  # Convert alpha from dB/km to dB/m
-        self.W0 = 1e-12
-        self.I0 = 1e-12
 
         self.wind_turbines = wind_turbines
         self.noise = noise
         self.listeners = listeners
-        self.individual_noise, self.total_noise = self.superpose_several_wind_turbine_sounds()
+        self.individual_noise = self.superpose_several_wind_turbine_sounds_in_dB() #pairs table with for each turbine, each listener
 
         self.generate_noise_map()
 
-    def calculate_sound_intensity_level(self, dBsource: [float, np.array], distance: [float, np.array]) -> np.array:
+    def calculate_sound_level_at_distance(self, dBsource: float, distance: float) -> float:
         """
-        Calculates sound intensity level at a given distance from the source.
+        Calculate the sound level at a given distance from the source considering
+        attenuation due to distance and atmospheric absorption.
 
         Parameters:
             dBsource (float): Sound level in decibels at the source.
             distance (float): Distance from the source in meters.
 
         Returns:
-            float: Sound intensity level at the given distance.
+            float: Sound level at the given distance in decibels.
         """
+        if distance == 0:
+            return dBsource
 
-        if not isinstance(dBsource, np.ndarray):
-            dBsource = np.array(dBsource)
+        geometric_spreading_loss = 10 * np.log10(4 * np.pi * distance ** 2)
+        atmospheric_absorption_loss = self.alpha * distance
 
-        if not isinstance(distance, np.ndarray):
-            distance = np.array(distance)
+        total_attenuation = geometric_spreading_loss + atmospheric_absorption_loss
+        resulting_sound_level = dBsource - total_attenuation
 
-        # replace zeros with infinity to avoid division by zero
-        distance[distance == 0] = np.inf
-        wattsource = (10 ** (dBsource / 10)) * self.W0
-        intensity_level = wattsource / (4 * np.pi * distance ** 2)
+        return resulting_sound_level
 
-        # apply air absorption
-        intensity_level *= 10 ** (-self.alpha * distance / 10)
-
-        # given in W
-        return intensity_level
-
-    def convert_intensity_level_into_decibels(self, intensity_level: [float, np.array]) -> float:
-        """
-        Converts a sound intensity level into decibels.
-        """
-        if not isinstance(intensity_level, np.ndarray):
-            intensity_level = np.array(intensity_level)
-
-        return 10 * np.log10(intensity_level / self.I0)
-
-    def superpose_several_wind_turbine_sounds(self) -> tuple[list[dict[str, Any]], float]:
-        """
-        Superposes sounds from multiple wind turbines at
-        specific observation points based on the given wind speed.
-        """
-
-        pairs = [
-            {
-                "turbine_name": turbine["name"],
-                "turbine_position": turbine["position"],
-                "listener_name": listener["name"],
-                "listener_position": listener["position"],
-                "distance": haversine(turbine["position"], listener["position"], unit=Unit.METERS)
-            }
-            for turbine in self.wind_turbines
-            for listener in self.listeners
-        ]
-        print(pairs)
-        
-        # add intensity level for each turbine
-        for pair in pairs:
-            noise = self.noise.sel(turbine=pair["turbine_name"])
-            intensity_level = self.calculate_sound_intensity_level(noise, pair["distance"])
-            pair["intensity_level"] = intensity_level
-
-        total_intensity_level = self.convert_intensity_level_into_decibels(
-            sum(pair["intensity_level"] for pair in pairs))
-
-        return pairs, total_intensity_level
-    
-    def calculate_dB_at_distance(self,dBsource,distance):
-        intensity_level_db = dBsource - 20 * np.log10(distance) - 11 - self.alpha * distance
-        return intensity_level_db
-
-        
     def superpose_several_wind_turbine_sounds_in_dB(self):
-       
+
         pairs = [
             {
                 "turbine_name": turbine["name"],
                 "turbine_position": turbine["position"],
                 "listener_name": listener["name"],
                 "listener_position": listener["position"],
-                "distance": haversine(turbine["position"], listener["position"], unit=Unit.METERS)
+                "distance": round(haversine(turbine["position"], listener["position"], unit=Unit.METERS))
             }
             for turbine in self.wind_turbines
             for listener in self.listeners
         ]
-        
+
         # add dB level for each turbine
         for pair in pairs:
             noise = self.noise.sel(turbine=pair["turbine_name"])
-            dB_level = self.calculate_dB_at_distance(noise, pair["distance"])
-            pair["intensity_level"] = dB_level
-            
-        total_intensity_level_db = 10 * np.log10(sum(10 ** (pair["intensity_level_db"] / 10) for pair in pairs))
+            dB_level = self.calculate_sound_level_at_distance(noise, pair["distance"])
+            pair["intensity_level_dB"] = dB_level
+        return pairs
 
-        return pairs, total_intensity_level_db 
-        
     def generate_noise_map(self):
         """
         Generates a noise map for the wind turbines
@@ -156,19 +100,19 @@ class NoiseMap:
         lat_max = max(turbine['turbine_position'][0] for turbine in self.individual_noise)
         lon_min = min(turbine['turbine_position'][1] for turbine in self.individual_noise)
         lon_max = max(turbine['turbine_position'][1] for turbine in self.individual_noise)
-        delay = 1 / 250
+        margin = 0
+
 
         # Adjust the map size to include observation points
         for point in self.individual_noise:
-            lat_min = min(lat_min, point["listener_position"][0]) - delay
-            lat_max = max(lat_max, point["listener_position"][0]) + delay
-            lon_min = min(lon_min, point["listener_position"][1]) - delay
-            lon_max = max(lon_max, point["listener_position"][1]) + delay
+            lat_min = min(lat_min, point["listener_position"][0]) - margin
+            lat_max = max(lat_max, point["listener_position"][0]) + margin
+            lon_min = min(lon_min, point["listener_position"][1]) - margin
+            lon_max = max(lon_max, point["listener_position"][1]) + margin
 
-        LAT, LON = np.meshgrid(
-            np.linspace(lat_min, lat_max, 100),
-            np.linspace(lon_min, lon_max, 100)
-        )
+        lon_array = np.linspace(lon_min, lon_max, 100)
+        lat_array = np.linspace(lat_min, lat_max, 100)
+        LON, LAT = np.meshgrid(lon_array, lat_array)
 
         # Calculate the noise level at each point
         positions = [point["position"] for point in self.wind_turbines]
@@ -178,15 +122,14 @@ class NoiseMap:
             for lat, lon in zip(LAT.flatten(), LON.flatten())
             for position in positions
         ]).reshape(LAT.shape[0], LAT.shape[1], len(positions))
-
-        intensity = 10 ** (self.noise / 10) * 1e-12
-
-        distance_noise = (4 * np.pi * distances ** 2)
-
-        intensity_distance = intensity.values / distance_noise[..., None]
-
-        Z = 10 * np.log10(intensity_distance.sum(axis=2) / 1e-12)
-
+        #intensity = 10 ** (self.noise / 10) * 1e-12
+        intensity = self.noise #dB
+        #distance_noise = (4 * np.pi * distances ** 2)
+        distance_noise = 20*np.log10(distances) #dB
+        intensity_distance = intensity.values - distance_noise[..., None] #dB at distance
+        #intensity_distance = intensity.values/distance_noise[..., None]
+        #Z = 10 * np.log10(intensity_distance.sum(axis=2) / 1e-12)
+        Z = 10 * np.log10((10**(intensity_distance/10)).sum(axis=2))
         # create xarray to store Z
         Z = xr.DataArray(
             data=Z,
@@ -224,8 +167,8 @@ class NoiseMap:
             contour_levels = [35, 40, 45, 50, 55, 60]
 
             plt.contourf(
-                self.LAT,
-                self.LON,
+                self.LON,  # x-axis, longitude
+                self.LAT,  # y-axis, latitude
                 self.Z.interp(
                     wind_speed=wind_speed,
                     kwargs={"fill_value": "extrapolate"}
@@ -233,20 +176,20 @@ class NoiseMap:
             )
             plt.colorbar(label='Noise Level (dB)')
             plt.title('Wind Turbine Noise Contours')
-            plt.xlabel('Longitude')
-            plt.ylabel('Latitude')
+            plt.xlabel('Longitude')  # Correct label for x-axis
+            plt.ylabel('Latitude')  # Correct label for y-axis
 
             # Plot wind turbines
             for turbine in self.wind_turbines:
-                plt.plot(*turbine['position'], 'ko')
+                plt.plot(*turbine['position'][::-1], 'ko')  # Make sure the position is in (Longitude, Latitude) order
                 # add label next to it, add a small offset to avoid overlapping
-                plt.text(turbine['position'][0] + 0.002, turbine['position'][1] + 0.002, turbine['name'])
+                plt.text(turbine['position'][1] + 0.002, turbine['position'][0] + 0.002, turbine['name'])
 
             # Plot observation points
             for point in self.listeners:
-                plt.plot(*point["position"], 'ro')
+                plt.plot(*point["position"][::-1], 'ro')  # Make sure the position is in (Longitude, Latitude) order
                 # add label next to it
-                plt.text(point["position"][0] + 0.002, point["position"][1] + 0.002, point["name"])
+                plt.text(point["position"][1] + 0.002, point["position"][0] + 0.002, point["name"])
 
             plt.grid(True)
             plt.show()
@@ -356,32 +299,23 @@ class NoiseMap:
 
         return altitudes
 
-    def plot_relief_between_points(self, wind_turbines, observation_points):
-        for turbine in wind_turbines:
-            turbine_position = turbine["position"]
-            for idx, observation_point in enumerate(observation_points):
-                altitudes = self.get_altitudes_between_points(turbine_position, observation_point)
+    def plot_relief_between_points(self, wind_turbines_names, observation_points_names):
+        for turbine_name in wind_turbines_names:
+            turbine_position = next((turbine["position"] for turbine in self.wind_turbines if turbine['name'] == turbine_name), None)
+            if turbine_position is None:
+                continue  # Skip if turbine name not found
+
+            for listener_name in observation_points_names:
+                listener = next((listener for listener in self.listeners if listener['name'] == listener_name), None)
+                if listener is None:
+                    continue  # Skip if listener name not found
+
+                altitudes = self.get_altitudes_between_points(turbine_position, listener["position"])
                 plt.figure(figsize=(5, 3))
                 plt.plot(altitudes)
-                plt.title(f"Relief entre {turbine['name']} et Point d'observation {idx + 1}")
-                plt.xlabel("Points intermédiaires")
+                plt.title(f"Relief between {turbine_name} and {listener_name}")
+                plt.xlabel("Intermediate Points")
                 plt.ylabel("Altitude (m)")
                 plt.show()
 
-    def superpose_several_wind_turbine_sounds2(self, observation_points: List[Tuple[float, float]]) -> Dict[
-        Tuple[float, float], float]:
-        """Superposes sounds from multiple wind turbines at specific observation points."""
 
-        results = {}
-
-        for observation_point in observation_points:
-            total_intensity_level = 0
-            for turbine in self.wind_turbines:
-                dBsource = turbine['noise_level']
-                distance = haversine(observation_point, turbine['position'], unit=Unit.METERS)
-                intensity_level = self.calculate_sound_intensity_level(dBsource, distance)
-                total_intensity_level += intensity_level
-            dB_total = self.convert_intensity_level_into_decibels(total_intensity_level)
-            results[observation_point] = dB_total
-
-        return results

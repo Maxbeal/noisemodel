@@ -5,6 +5,12 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Dict
 from haversine import haversine, Unit
+import xarray as xr
+from tqdm.auto import tqdm
+import folium
+import math
+
+from . import DATA_DIR
 
 MAX_WIND_SPEED = 30  # Assuming max wind speed is 30 m/s
 
@@ -18,317 +24,264 @@ class NoiseAnalysis:
             wind_turbines,
             listeners
     ):
-        self.wind_speed = wind_speed.to_array()
+        self.wind_speed = wind_speed
         self.noise = noise
         self.noise_map = noise_map
+
+
+
         self.turbines = wind_turbines
         self.listeners = listeners
         self.detailed_prediction_cache = None  # Cache for detailed_no
         self.noise_dataframes_cache = None  # Cache for get_noise_dataframes
+        self.alpha = 1/1000 #atmospheric absorption in dB/m
 
-    def calculate_annual_hours_from_dataframe(self) -> Dict[str, Dict[str, float]]:
-        results = {}
-        bins = [0, 3, 6, 9, 12, 16, self.MAX_WIND_SPEED]
-        labels = ['0-3 m/s', '3-6 m/s', '6-9 m/s', '9-12 m/s', '12-16 m/s', '>16 m/s']
+    def analyze_and_calculate_lden(self):
+        # Step 1: Interpolate noise based on wind speed data
+        interpolated_noise = self.interpolate_noise(self.wind_speed, self.noise_map.individual_noise)
+        print("interpolate noise for every wind speeds at wind turbine!")
+        # Step 2: Calculate the cumulative dB
+        cumulative_dB = self.calculate_cumulative_dB(interpolated_noise)
+        print("step 2/5 done!")
+        # Step 3: Separate sound emissions into day, evening, and night
+        noise_separated = self.separate_noise_emissions(cumulative_dB)
+        print("noise emissions separated as day/evening/night emissions")
+        # Step 4: Calculate L_den for each listener
+        Lden = self.compute_lden(noise_separated)
+        print("Lden calculated!")
+        # Step 5: Update wt.listeners with L_den values
+        self.update_listeners_with_lden(Lden)
+        print("wt.listeners updated with Lden!")
+        # Return values if needed, otherwise they can be accessed directly from the instance
+        return Lden, self.listeners, noise_separated
 
-        for turbine_name, df in self.wind_data.items():
-            df['SpeedRange'] = pd.cut(df['WS10'], bins=bins, labels=labels, right=False)
-            hours = df['SpeedRange'].value_counts(normalize=True) * (df.shape[0] * 0.5)
-            results[turbine_name] = hours.to_dict()
+    def interpolate_noise(self, wind_speed, noise_pairs):
+        # Creating a dictionary from noise_pairs with keys as (turbine_name, listener_name) tuples
+        d = {(p["turbine_name"], p["listener_name"]): p for p in self.noise_map.individual_noise}
 
-        return results
+        # Initialize a dictionary to store the results
+        interpolated_results = {}
 
-    def calculate_perceived_noise(self, turbine: Dict, wind_speed: float) -> float:
-        if 3 <= wind_speed <= 25:
-            noise_predictions = self.turbine_model.predict_noise_at_wind_speed([turbine], wind_speed)
-            return noise_predictions.get(turbine.get('name'), {}).get(f"{wind_speed:.1f}m/s")
-        return None
+        # Loop over each listener
+        for listener in self.listeners:
+            listener_name = listener['name']  # Extract the name of the current listener.
+
+            # Loop over each turbine
+            for turbine in self.turbines:
+                turbine_name = turbine['name']  # Extract the name of the current turbine.
+
+                # Retrieve the distance data for the current listener-turbine pair.
+                distance = d[(turbine_name, listener_name)]['distance']
+
+                # Select the wind speed data for the current turbine.
+                wind_speed_data = self.wind_speed["WS10"].sel(turbine=turbine_name)
+
+                # Retrieve the intensity level data for the current listener-turbine pair.
+                intensity_data = d[(turbine_name, listener_name)]['intensity_level_dB']
+
+                # Interpolate the intensity data at the wind speeds of the current turbine.
+                interpolated_value = intensity_data.interp(wind_speed=wind_speed_data)
+
+                # Replace NaN values in the interpolated data with 0.
+                interpolated_value = xr.where(np.isnan(interpolated_value), 0, interpolated_value)
+
+                # Store the interpolated values and the distance in the dictionary.
+                interpolated_results[(listener_name, turbine_name)] = {
+                    'interpolated_intensity': interpolated_value,
+                    'distance': distance
+                }
+
+        return interpolated_results
 
 
-    def _categorize_time_period(self, time: np.datetime64) -> str:
-        timestamp = pd.Timestamp(time)
-        if 6 <= timestamp.hour < 18:
-            return "day"
-        elif 18 <= timestamp.hour < 22:
-            return "evening"
-        else:
-            return "night"
+    def calculate_cumulative_dB(self, interpolated_noise):
+        """
+        Calculate the cumulative dB for each listener at each time point.
 
+        Parameters:
+            interpolated_noise (dict): A dictionary with interpolated noise data for each turbine-listener pair.
 
-    def separate_time_periods(self, df: pd.DataFrame) -> dict:
-        categorize_func = np.vectorize(self._categorize_time_period)
-        df['Period'] = categorize_func(df['Time'])
-        return {period: df[df['Period'] == period] for period in ['day', 'evening', 'night']}
+        Returns:
+            dict: A dictionary with cumulative dB values at each time point for each listener.
+        """
+        # Initialize a dictionary to store the cumulative dB for each listener.
+        all_listeners_time_series = {}
 
-    def calculate_lden(self, day_df, evening_df, night_df) -> float:
-        Lday = 10 * np.log10(np.mean(10 ** (day_df['Noise Level (dB)'] / 10)))
-        Levening = 10 * np.log10(np.mean(10 ** ((evening_df['Noise Level (dB)'] + 5) / 10)))
-        Lnight = 10 * np.log10(np.mean(10 ** ((night_df['Noise Level (dB)'] + 10) / 10)))
-        return (12 * Lday + 4 * Levening + 8 * Lnight) / 24
+        # Loop over each listener in the class's listeners list.
+        for listener in self.listeners:
+            listener_name = listener['name']  # Extract the name of the current listener.
 
-    def calculate_noise_hours_per_period(self) -> Dict[str, Dict[str, Dict[int, float]]]:
-        results = {}
-        bins = np.arange(0, 30, 0.1)
+            # This dictionary comprehension filters the interpolated noise data for each listener.
+            # It iterates over all items in the interpolated_noise dictionary, where each item's key is a tuple (lstnr, turbine).
+            # The comprehension includes only those items where the listener part of the key matches the current listener_name.
+            # The resulting dictionary, listener_data, maps each turbine associated with the current listener to its respective noise data.
 
+            listener_data = {turbine: data for (lstnr, turbine), data in interpolated_noise.items() if lstnr == listener_name}
+
+            # Convert dB to power for each turbine's data at each time point and sum them.
+            # dB values are converted to power using the formula: power = 10^(dB/10).
+            # The sum is computed using a list comprehension that iterates over each turbine's data.
+            power_sums = sum([10 ** (turbine_data['interpolated_intensity'] / 10) for turbine_data in listener_data.values()])
+
+            # Convert the total power sum back to dB for each time point.
+            # The dB value is calculated using the formula: dB = 10 * log10(power).
+            total_dB_time_series = 10 * np.log10(power_sums)
+
+            # Store the resulting time series of cumulative dB values for the listener.
+            # The key is the listener's name, and the value is the cumulative dB time series.
+            all_listeners_time_series[listener_name] = total_dB_time_series
+
+        # Return the dictionary containing cumulative dB time series for each listener.
+        return all_listeners_time_series
+
+    def separate_noise_emissions(self, all_listeners_time_series, day_start='07:00', day_end='19:00',
+                                 evening_start='19:00', evening_end='23:00'):
+        # Initialize a dictionary to store separated data for each listener
+        separated_data = {}
+
+        # Loop through each listener's data in the provided time series data
+        for listener, data in all_listeners_time_series.items():
+            # Convert the 'time' coordinate of the data to a pandas datetime index
+            # This allows for easier manipulation and filtering based on time
+            time_index = pd.to_datetime(data['time'].values)
+
+            # Create a boolean mask for the day period
+            # The mask is True for times within the defined day start and end times
+            day_mask = xr.DataArray((time_index.time >= pd.to_datetime(day_start).time()) &
+                                    (time_index.time < pd.to_datetime(day_end).time()),
+                                    coords={'time': data['time']}, dims=['time'])
+
+            # Create a boolean mask for the evening period
+            # The mask is True for times within the defined evening start and end times
+            evening_mask = xr.DataArray((time_index.time >= pd.to_datetime(evening_start).time()) &
+                                        (time_index.time < pd.to_datetime(evening_end).time()),
+                                        coords={'time': data['time']}, dims=['time'])
+
+            # Create a boolean mask for the night period
+            # The mask is True for times outside the defined day period, i.e., from evening end to day start
+            night_mask = xr.DataArray((time_index.time >= pd.to_datetime(evening_end).time()) |
+                                      (time_index.time < pd.to_datetime(day_start).time()),
+                                      coords={'time': data['time']}, dims=['time'])
+
+            # Filter the data for the day period using the day_mask
+            # 'drop=True' removes the time points where the condition is False (outside the day period)
+            day_data = data.where(day_mask, drop=True)
+
+            # Filter the data for the evening period using the evening_mask
+            evening_data = data.where(evening_mask, drop=True)
+
+            # Filter the data for the night period using the night_mask
+            night_data = data.where(night_mask, drop=True)
+
+            # Store the separated day, evening, and night data for the current listener
+            # The data for each period is stored in a dictionary under keys 'day', 'evening', and 'night'
+            separated_data[listener] = {'day': day_data, 'evening': evening_data, 'night': night_data}
+
+        # Return the dictionary containing separated data for each listener
+        return separated_data
+
+    def find_closest_wind_turbine(self):
+        d = {(p["turbine_name"], p["listener_name"]): p for p in self.noise_map.individual_noise}
+
+        turbine_names = []
         for turbine in self.turbines:
-            turbine_name = turbine['name']
-            df = self.wind_data[turbine_name].copy()
-            df['SpeedBin'] = pd.cut(df['WS10'], bins=bins, labels=bins[:-1])
-            avg_wind_speeds = df.groupby('SpeedBin')['WS10'].mean()
+            turbine_names.append(turbine['name'])
 
-            period_hours = {'day': {}, 'evening': {}, 'night': {}}
-            for speed_bin, avg_wind_speed in avg_wind_speeds.items():
-                noise = self.calculate_perceived_noise(turbine, avg_wind_speed)
-                if noise is not None:
-                    rounded_noise = round(noise)
-                    bin_data = df[df['SpeedBin'] == speed_bin]
-                    for period, hours_range in {
-                        'day': range(7, 19),
-                        'evening': range(19, 23),
-                        'night': list(range(0, 7)) + [23]
-                    }.items():
-                        period_count = bin_data.index.hour.isin(hours_range).sum()
-                        period_hours[period][rounded_noise] = period_hours[period].get(rounded_noise, 0) + period_count
+        closest_turbine_distance = {}
 
-            results[turbine_name] = period_hours
+        # Loop over each listener
+        for listener in self.listeners:
+            listener_name = listener['name']  # Extract the name of the current listener.
+            # Find the distance to each turbine and get the minimum
+            min_distance = min(d[(turbine['name'], listener_name)]['distance'] for turbine in self.turbines)
+            closest_turbine_distance[listener_name] = min_distance
 
-        return results
-            
-    def convert_dB_to_W(self, noise_dict: Dict[str, Dict[str, Dict[int, float]]]) -> Dict[str, Dict[str, Dict[int, float]]]:
-        """
-        Converts the noise levels from dB to W using the calculate_sound_intensity_level function.
+        return closest_turbine_distance
+    def compute_lden(self, separated_data):
+        lden_values = {}
 
-        :param noise_dict: A dictionary with noise levels in dB.
-        :return: A dictionary with noise levels in W.
-        """
-        results_W = {}
-        for turbine_name, periods in noise_dict.items():
-            results_W[turbine_name] = {}
-            for period, noise_levels in periods.items():
-                results_W[turbine_name][period] = {}
-                for dB, hours in noise_levels.items():
-                    # Utilisez l'instance noise_map pour appeler la fonction calculate_sound_intensity_level
-                    intensity_level = self.noise_map.calculate_sound_intensity_level(dB, 100)  # Assuming a distance of 100 meters for conversion
-                    results_W[turbine_name][period][intensity_level] = hours
-        return results_W
+        for listener, periods in separated_data.items():
+            # Convert dB values to power, average them, and convert back to dB for each period
+            L_day_avg = 10 * np.log10((10 ** (periods['day'] / 10)).mean())
+            L_evening_avg = 10 * np.log10((10 ** (periods['evening'] / 10)).mean())
+            L_night_avg = 10 * np.log10((10 ** (periods['night'] / 10)).mean())
 
+            # Convert dB to power, apply weightings, and sum
+            L_den_power = (12 * 10 ** (L_day_avg / 10)) + \
+                          (4 * 10 ** ((L_evening_avg + 5) / 10)) + \
+                          (8 * 10 ** ((L_night_avg + 10) / 10))
 
-    def calculate_noise_hours_in_W(self) -> Dict[str, Dict[str, Dict[float, float]]]:
-        """
-        Calculates the number of hours per year that a certain noise level (in W) is reached for each turbine, 
-        separated by day, evening, and night periods.
+            # Convert back to dB to get L_den
+            L_den = 10 * np.log10(L_den_power / 24)
 
-        :return: A dictionary with turbine names as keys and another dictionary as values. 
-                 The inner dictionary has periods (day, evening, night) as keys and another dictionary as values.
-                 The innermost dictionary has noise levels (in W, rounded) as keys and the number of hours as values.
-        """
-        results_dB = {}
-        results_W = {}
+            # Store L_den value for this listener
+            lden_values[listener] = np.round(L_den.values, 1)
 
+        return lden_values
+    def update_listeners_with_lden(self, Lden):
+        for listener in self.listeners:
+            listener_name = listener['name']
+            if listener_name in Lden:
+                # Extract the numerical value from the xarray DataArray
+                lden_value = Lden[listener_name]
+                listener['L_den'] = lden_value
+
+        # Optionally, you can return the updated listeners list
+        return self.listeners
+
+    import folium
+
+    def display_listeners_on_map_with_Lden(self):
+        icon_file_path = str(DATA_DIR / "pictures" / "pic_turbine.png")
+        icon_image = folium.features.CustomIcon(icon_image_path, icon_size=(28, 28))
+        # Create a folium map
+        m = folium.Map(location=[47.3769, 8.5417], zoom_start=12, tiles='CartoDB positron')
+
+        # Get the closest turbine distance for each listener
+        closest_turbine_distance = self.find_closest_wind_turbine()
+
+        # Define color map based on L_den value
+        def get_color(lden_value):
+            if lden_value < 43:
+                return 'green'
+            elif lden_value < 46:
+                return 'orange'
+            elif lden_value < 48:
+                return 'red'
+            else:
+                return 'darkred'
+
+        # Add markers for each listener with L_den value and distance to closest turbine
+        for listener in self.listeners:
+            listener_name = listener['name']
+            folium.Marker(
+                location=listener['position'],
+                popup=f"{listener_name}: L_den {listener['L_den']} dB, Closest turbine distance: {closest_turbine_distance[listener_name]} m",
+                icon=folium.Icon(color=get_color(listener['L_den']))
+            ).add_to(m)
+
+        # Add markers for wind turbines
         for turbine in self.turbines:
-            turbine_name = turbine['name']
-            df = self.wind_data[turbine_name]
+            folium.Marker(
+                location=turbine['position'],
+                popup=f"{turbine['name']}",
+                icon=icon_image
+            ).add_to(m)
 
-            # Calculate the number of years in the data
-            num_years = df.index.year.nunique()
+        # Adding a legend
+        legend_html = '''
+         <div style="position: fixed; 
+         bottom: 50px; left: 50px; width: 150px; height: 150px; 
+         border:2px solid grey; z-index:9999; font-size:14px;
+         ">&nbsp; L_den Legend <br>
+         &nbsp; <i class="fa fa-map-marker fa-2x" style="color:green"></i>&nbsp; < 43 dB <br>
+         &nbsp; <i class="fa fa-map-marker fa-2x" style="color:orange"></i>&nbsp; 43-46 dB <br>
+         &nbsp; <i class="fa fa-map-marker fa-2x" style="color:red"></i>&nbsp; 46-48 dB <br>
+         &nbsp; <i class="fa fa-map-marker fa-2x" style="color:darkred"></i>&nbsp; > 48 dB
+          </div>
+         '''
+        m.get_root().html.add_child(folium.Element(legend_html))
 
-            # Group wind speeds into bins and calculate the average wind speed in each bin
-            bins = np.arange(0, 30, 0.1)  # Assuming max wind speed is 30 m/s
-            df['SpeedBin'] = pd.cut(df['WS10'], bins=bins, labels=bins[:-1])
-            avg_wind_speeds = df.groupby('SpeedBin')['WS10'].mean()
-
-            period_hours_dB = {
-                'day': {},
-                'evening': {},
-                'night': {}
-            }
-
-            for speed_bin, avg_wind_speed in avg_wind_speeds.items():
-                noise_dB = self.calculate_perceived_noise(turbine, avg_wind_speed)
-                if noise_dB is not None:
-                    bin_data = df[df['SpeedBin'] == speed_bin]
-
-                    for period, hours_range in {
-                        'day': range(7, 19),
-                        'evening': range(19, 23),
-                        'night': list(range(0, 7)) + [23]
-                    }.items():
-                        period_count = len(bin_data[bin_data.index.hour.isin(hours_range)])
-                        period_hours_dB[period][noise_dB] = period_hours_dB[period].get(noise_dB, 0) + (period_count * 0.5 / num_years)
-
-            results_dB[turbine_name] = period_hours_dB
-
-            # Convert dB to W
-            results_W[turbine_name] = {}
-            for period, noise_levels in period_hours_dB.items():
-                results_W[turbine_name][period] = {}
-                for dB, hours in noise_levels.items():
-                    intensity_level = self.noise_map.calculate_sound_intensity_level(dB, 100)  # Assuming a distance of 100 meters for conversion
-                    rounded_intensity = round(intensity_level, 12)  # Adjust the precision as needed
-                    results_W[turbine_name][period][rounded_intensity] = hours
-
-        return results_W
-
-    
-
-    def _process_single_turbine(self, df, turbine, detailed_predictions):
-        turbine_name = turbine.get('name', 'Unknown')
-        turbine_predictions = detailed_predictions[turbine_name]
-
-        # Extract wind speeds from dataframe
-        wind_speeds = df['WS10']
-
-        # Convert wind speeds to string format for dictionary lookup
-        wind_speeds_str = wind_speeds.apply(lambda x: f"{x:.1f}m/s")
-
-        # Map wind speeds to their corresponding noise levels using the turbine_predictions dictionary
-        noise_levels = wind_speeds_str.map(turbine_predictions)
-
-        # Create a new dataframe
-        noise_df = pd.DataFrame({
-            'Wind Speed (m/s)': wind_speeds,
-            'Noise Level (dB)': noise_levels
-        })
-
-        return turbine_name, noise_df
-
-    def get_noise_dataframes(self, wind_turbines: List[Dict]) -> List[Tuple[str, pd.DataFrame]]:
-        """
-        Generate a list of tuples with turbine name and its corresponding dataframe with wind speeds and noise levels.
-        """
-        # Check if get_noise_dataframes has already been computed
-        if self.noise_dataframes_cache is not None:
-            return self.noise_dataframes_cache
-
-        noise_dataframes = []
-
-        # Check if detailed_noise_prediction has already been computed
-        if self.detailed_prediction_cache is None:
-            self.detailed_prediction_cache = self.turbine_model.detailed_noise_prediction(wind_turbines)
-
-        detailed_predictions = self.detailed_prediction_cache
-
-        # Use ThreadPoolExecutor to process data concurrently
-        with ThreadPoolExecutor(max_workers=5) as executor:  # Adjust max_workers as needed
-            results = list(executor.map(self._process_single_turbine, self.wind_data.values(), wind_turbines, [detailed_predictions]*len(wind_turbines)))
-
-        # Wrap the results with tqdm for progress bar
-        for result in tqdm(results, total=len(wind_turbines), desc="Processing turbines", ncols=100):
-            noise_dataframes.append(result)
-
-        # Cache the results of get_noise_dataframes
-        self.noise_dataframes_cache = noise_dataframes
-
-        return noise_dataframes
+        return m
 
 
-
-    def calculate_sound_at_observation_points(self, observation_points: List[Tuple[float, float]]) -> Dict[Tuple[float, float], pd.DataFrame]:
-        """
-        Calculate the noise levels at specific observation points.
-        """
-        # Check if get_noise_dataframes has already been computed
-        if self.noise_dataframes_cache is None:
-            self.noise_dataframes_cache = self.get_noise_dataframes(self.turbines)
-
-        noise_dataframes = self.noise_dataframes_cache
-
-        # Create a dictionary for faster lookup of turbines by name
-        turbine_dict = {t['name']: t for t in self.turbines}
-
-        # Pre-process noise_dataframes for faster access
-        noise_dict = {turbine: df['Noise Level (dB)'] for turbine, df in noise_dataframes}
-
-        # Use the first dataframe's 'time' index as the reference times
-        times = noise_dataframes[0][1].index.tolist()
-
-        results = {}
-
-        # Wrap the observation_points with tqdm for progress bar
-        for observation_point in tqdm(observation_points, desc="Processing observation points", ncols=100):
-            noise_levels = []
-
-            for time in times:
-                total_noise = 0
-                for turbine, _ in noise_dataframes:
-                    if turbine in noise_dict:
-                        turbine_dict[turbine]['noise_level'] = noise_dict[turbine].loc[time]
-
-                total_noise += self.noise_map.superpose_several_wind_turbine_sounds([observation_point])[observation_point]
-
-                # If the total noise is less than 0 dB, set it to 0 dB
-                if total_noise < 0:
-                    total_noise = 0
-
-                noise_levels.append(total_noise)
-
-            df_result = pd.DataFrame({'Time': times, 'Noise Level (dB)': noise_levels})
-            results[observation_point] = df_result
-
-        return results
-    
-    def calculate_sound_at_observation_points2(self, observation_points: List[Tuple[float, float]]) -> Dict[Tuple[float, float], pd.DataFrame]:
-        """
-        Calculate the noise levels at specific observation points.
-        """
-        noise_dataframes = self.get_noise_dataframes(self.turbines)
-
-        # Create a dictionary for faster lookup of turbines by name
-        turbine_dict = {t['name']: t for t in self.turbines}
-
-        # Pre-process noise_dataframes for faster access
-        noise_dict = {turbine: df['Noise Level (dB)'] for turbine, df in noise_dataframes}
-
-        # Use the first dataframe's 'time' index as the reference times
-        times = noise_dataframes[0][1].index.tolist()
-
-        results = {}
-
-        # Wrap the observation_points with tqdm for progress bar
-        for observation_point in tqdm(observation_points, desc="Processing observation points", ncols=100):
-            noise_levels = []
-
-            for time in times:
-                total_noise = 0
-                for turbine, _ in noise_dataframes:
-                    if turbine in noise_dict:
-                        turbine_dict[turbine]['noise_level'] = noise_dict[turbine].loc[time]
-
-                total_noise += self.noise_map.superpose_several_wind_turbine_sounds2([observation_point])[observation_point]
-
-                # If the total noise is less than 0 dB, set it to 0 dB
-                if total_noise < 0:
-                    total_noise = 0
-
-                noise_levels.append(total_noise)
-
-            df_result = pd.DataFrame({'Time': times, 'Noise Level (dB)': noise_levels})
-            results[observation_point] = df_result
-
-        return results
-    
-    
-
-    def simulate_sound_at_observer(self, observation_points: List[Tuple[float, float]]) -> Dict[float, Dict[Tuple[float, float], float]]:
-        """Superposes sounds from multiple wind turbines at specific observation points for various wind speeds."""
-
-        wind_speed_results = {}
-
-        for wind_speed in range(3, 13):  # Iterate over wind speeds from 3 to 12 m/s
-            results = {}
-            noise_predictions = self.turbine_model.predict_noise_at_wind_speed(self.turbines, wind_speed)
-
-            for observation_point in observation_points:
-                total_intensity_level = 0
-                for turbine in self.turbines:
-                    turbine_name = turbine['name']
-                    dBsource = noise_predictions[turbine_name][f'{wind_speed}.0m/s']
-                    distance = haversine(observation_point, turbine['position'], unit=Unit.METERS)
-                    intensity_level = self.noise_map.calculate_sound_intensity_level(dBsource, distance)
-                    total_intensity_level += intensity_level
-                dB_total = self.noise_map.convert_intensity_level_into_decibels(total_intensity_level)
-                results[observation_point] = dB_total
-
-            wind_speed_results[wind_speed] = results
-
-        return wind_speed_results

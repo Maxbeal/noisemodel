@@ -43,7 +43,15 @@ class WindSpeed:
         self.hours_of_operation = self.calculate_operation_time()
 
     def _download_single_turbine_data(self, turbine):
+        """
+        Downloads data for a single wind turbine, with retry logic in case of failure.
 
+        Args:
+            turbine (dict): Dictionary containing the wind turbine's data.
+
+        Returns:
+            xarray.Dataset: Dataset containing the downloaded data.
+        """
         latitude = turbine["position"][0]
         longitude = turbine["position"][1]
         url = (f"https://wps.neweuropeanwindatlas.eu/api/mesoscale-ts/"
@@ -51,26 +59,37 @@ class WindSpeed:
                f"&variable=WD10&variable=WS10&dt_start={self.start_year}-"
                f"01-01T00:00:00&dt_stop={self.end_year}-12-31T23:30:00")
 
-        try:
-            response = requests.get(url, timeout=25)
-        except Timeout as e:
-            raise Timeout(f"The request to wps.neweuropeanwindatlas.eu has timed out.") from None
+        attempts = 0
+        max_attempts = 10
 
-        if response.status_code == 200:
-            with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp_file:
-                tmp_file.write(response.content)
-                tmp_file_path = tmp_file.name
-            ds = xr.open_dataset(tmp_file_path)
-            return ds[["WD10", "WS10"]]
-        else:
-            raise Exception(f"Error downloading data for {turbine['name']}. Please check the latitude and longitude.")
+        while attempts < max_attempts:
+            try:
+                response = requests.get(url, timeout=25)
+                if response.status_code == 200:
+                    with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp_file:
+                        tmp_file.write(response.content)
+                        tmp_file_path = tmp_file.name
+                    ds = xr.open_dataset(tmp_file_path)
+
+                    # Simplify the dataset
+                    ds_simplified = ds[["WD10", "WS10"]].copy()
+                    ds_simplified.attrs.clear()
+
+                    return ds_simplified  # Return the simplified dataset
+                else:
+                    raise Exception(f"Error downloading data for {turbine['name']}. Status code: {response.status_code}")
+            except (Timeout, Exception) as e:
+                attempts += 1
+                if attempts >= max_attempts:
+                    raise Exception(f"Failed to download data for {turbine['name']} after {max_attempts} attempts.")
+                print(f"Retrying download for {turbine['name']} (Attempt {attempts}/{max_attempts})")
 
     def download_data(self) -> xr.DataArray:
         print("Starting concurrent data download for all turbines...")
         dataframes = {}
 
         # Use ThreadPoolExecutor to download data concurrently
-        with ThreadPoolExecutor(max_workers=2) as executor:  # Adjust max_workers as needed
+        with ThreadPoolExecutor(max_workers=1) as executor:  # Adjust max_workers as needed
             futures = [executor.submit(self._download_single_turbine_data, turbine) for turbine in self.wind_turbines]
 
             # Wait for all futures to complete
