@@ -9,6 +9,8 @@ import xarray as xr
 from tqdm.auto import tqdm
 import folium
 import math
+from pathlib import Path
+from datetime import datetime
 
 from . import DATA_DIR
 
@@ -232,8 +234,12 @@ class NoiseAnalysis:
     import folium
 
     def display_listeners_on_map_with_Lden(self):
-        icon_file_path = str(DATA_DIR / "pictures" / "pic_turbine.png")
-        icon_image = folium.features.CustomIcon(icon_image_path, icon_size=(28, 28))
+        icon_file_path = str(DATA_DIR / "pictures" / "icon_turbine.png")
+        house_green_file_path = str(DATA_DIR / "pictures" / "house_green.png")
+        house_orange_file_path = str(DATA_DIR / "pictures" / "house_orange.png")
+        house_red_file_path = str(DATA_DIR / "pictures" / "house_red.png")
+        house_dark_red_file_path = str(DATA_DIR / "pictures" / "house_dark_red.png")
+
         # Create a folium map
         m = folium.Map(location=[47.3769, 8.5417], zoom_start=12, tiles='CartoDB positron')
 
@@ -241,27 +247,29 @@ class NoiseAnalysis:
         closest_turbine_distance = self.find_closest_wind_turbine()
 
         # Define color map based on L_den value
-        def get_color(lden_value):
+        def get_file_path(lden_value):
             if lden_value < 43:
-                return 'green'
-            elif lden_value < 46:
-                return 'orange'
-            elif lden_value < 48:
-                return 'red'
+                return house_green_file_path
+            elif lden_value < 45:
+                return house_orange_file_path
+            elif lden_value < 47:
+                return house_red_file_path
             else:
-                return 'darkred'
+                return house_dark_red_file_path
 
         # Add markers for each listener with L_den value and distance to closest turbine
         for listener in self.listeners:
             listener_name = listener['name']
+            icon_image = folium.features.CustomIcon(get_file_path(listener['L_den']), icon_size=(50, 50))
             folium.Marker(
                 location=listener['position'],
                 popup=f"{listener_name}: L_den {listener['L_den']} dB, Closest turbine distance: {closest_turbine_distance[listener_name]} m",
-                icon=folium.Icon(color=get_color(listener['L_den']))
+                icon=icon_image
             ).add_to(m)
 
         # Add markers for wind turbines
         for turbine in self.turbines:
+            icon_image = folium.features.CustomIcon(icon_file_path, icon_size=(50, 50))
             folium.Marker(
                 location=turbine['position'],
                 popup=f"{turbine['name']}",
@@ -282,6 +290,6 @@ class NoiseAnalysis:
          '''
         m.get_root().html.add_child(folium.Element(legend_html))
 
-        return m
+        m.save(Path.cwd() / f"lden_map_{datetime.now()}.html")
 
 
