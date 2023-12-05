@@ -54,6 +54,8 @@ setup(
         "osmnx",
         "skops",
         "matplotlib",
+        "netCDF4",
+        "seaborn"
     ],
     url="https://github.com/MaximeBalandret/noisemodel",
     description="Noise modelling of wind turbines",

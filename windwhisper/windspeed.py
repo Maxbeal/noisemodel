@@ -19,7 +19,8 @@ import seaborn as sns
 
 
 # path to tests/fixtures folder, with test being in the root folder
-FIXTURE_DIR = str(Path(__file__).parent.parent / 'tests' / 'fixtures')
+FIXTURE_DIR = str(Path(__file__).parent.parent / "tests" / "fixtures")
+
 
 class WindSpeed:
     """
@@ -31,7 +32,6 @@ class WindSpeed:
         self.start_year = start_year
         self.end_year = end_year
         self.weibull_params = {}
-
 
         if debug is True:
             # we unpickle the data to save time
@@ -54,10 +54,12 @@ class WindSpeed:
         """
         latitude = turbine["position"][0]
         longitude = turbine["position"][1]
-        url = (f"https://wps.neweuropeanwindatlas.eu/api/mesoscale-ts/"
-               f"v1/get-data-point?latitude={latitude}&longitude={longitude}"
-               f"&variable=WD10&variable=WS10&dt_start={self.start_year}-"
-               f"01-01T00:00:00&dt_stop={self.end_year}-12-31T23:30:00")
+        url = (
+            f"https://wps.neweuropeanwindatlas.eu/api/mesoscale-ts/"
+            f"v1/get-data-point?latitude={latitude}&longitude={longitude}"
+            f"&variable=WD10&variable=WS10&dt_start={self.start_year}-"
+            f"01-01T00:00:00&dt_stop={self.end_year}-12-31T23:30:00"
+        )
 
         attempts = 0
         max_attempts = 10
@@ -66,7 +68,9 @@ class WindSpeed:
             try:
                 response = requests.get(url, timeout=25)
                 if response.status_code == 200:
-                    with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp_file:
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".nc", delete=False
+                    ) as tmp_file:
                         tmp_file.write(response.content)
                         tmp_file_path = tmp_file.name
                     ds = xr.open_dataset(tmp_file_path)
@@ -77,20 +81,31 @@ class WindSpeed:
 
                     return ds_simplified  # Return the simplified dataset
                 else:
-                    raise Exception(f"Error downloading data for {turbine['name']}. Status code: {response.status_code}")
+                    raise Exception(
+                        f"Error downloading data for {turbine['name']}. Status code: {response.status_code}"
+                    )
             except (Timeout, Exception) as e:
                 attempts += 1
                 if attempts >= max_attempts:
-                    raise Exception(f"Failed to download data for {turbine['name']} after {max_attempts} attempts.")
-                print(f"Retrying download for {turbine['name']} (Attempt {attempts}/{max_attempts})")
+                    raise Exception(
+                        f"Failed to download data for {turbine['name']} after {max_attempts} attempts."
+                    )
+                print(
+                    f"Retrying download for {turbine['name']} (Attempt {attempts}/{max_attempts})"
+                )
 
     def download_data(self) -> xr.DataArray:
         print("Starting concurrent data download for all turbines...")
         dataframes = {}
 
         # Use ThreadPoolExecutor to download data concurrently
-        with ThreadPoolExecutor(max_workers=1) as executor:  # Adjust max_workers as needed
-            futures = [executor.submit(self._download_single_turbine_data, turbine) for turbine in self.wind_turbines]
+        with ThreadPoolExecutor(
+            max_workers=1
+        ) as executor:  # Adjust max_workers as needed
+            futures = [
+                executor.submit(self._download_single_turbine_data, turbine)
+                for turbine in self.wind_turbines
+            ]
 
             # Wait for all futures to complete
             results = [future.result() for future in futures]
@@ -98,7 +113,9 @@ class WindSpeed:
             # store the results in a xr.DataArray
             # with dimensions turbine and time
             arr = xr.concat(results, dim="turbine")
-            arr = arr.assign_coords(turbine=[turbine["name"] for turbine in self.wind_turbines])
+            arr = arr.assign_coords(
+                turbine=[turbine["name"] for turbine in self.wind_turbines]
+            )
 
         # remove all coordinates except "turbine" and "time"
         arr = arr.reset_coords(drop=True)
@@ -140,44 +157,60 @@ class WindSpeed:
         df = self.wind_speed.to_array().to_dataframe("val").unstack()["val"].T
 
         wd_bins = np.arange(0, 361, 30)  # Wind direction bins of 30 degrees
-        ws_bins = np.arange(0, df.loc[:, ('WS10', slice(None))].max().max() + 1, 1)  # Wind speed bins of 1 km/h
+        ws_bins = np.arange(
+            0, df.loc[:, ("WS10", slice(None))].max().max() + 1, 1
+        )  # Wind speed bins of 1 km/h
 
         # Separate the DataFrame into two DataFrames for WD10 and WS10
-        df_wd = df['WD10']
-        df_ws = df['WS10']
+        df_wd = df["WD10"]
+        df_ws = df["WS10"]
 
         # Initialize an empty dictionary to hold the results
         result_tables = {}
 
         # Get the unique turbine names
-        turbines = df.columns.get_level_values('turbine').unique()
+        turbines = df.columns.get_level_values("turbine").unique()
 
         # Iterate over each turbine
         for turbine in turbines:
             # Create binned data for wind direction and wind speed
-            wd_binned = pd.cut(df_wd[turbine], bins=wd_bins,
-                               labels=[f'{left}-{right}' for left, right in zip(wd_bins[:-1], wd_bins[1:])],
-                               right=False)
-            ws_binned = pd.cut(df_ws[turbine], bins=ws_bins,
-                               labels=[f'{left}-{right}' for left, right in zip(ws_bins[:-1], ws_bins[1:])],
-                               right=False)
+            wd_binned = pd.cut(
+                df_wd[turbine],
+                bins=wd_bins,
+                labels=[
+                    f"{left}-{right}" for left, right in zip(wd_bins[:-1], wd_bins[1:])
+                ],
+                right=False,
+            )
+            ws_binned = pd.cut(
+                df_ws[turbine],
+                bins=ws_bins,
+                labels=[
+                    f"{left}-{right}" for left, right in zip(ws_bins[:-1], ws_bins[1:])
+                ],
+                right=False,
+            )
 
             # Merge the binned data into a single DataFrame
-            binned_df = pd.DataFrame({'WD_bin': wd_binned, 'WS_bin': ws_binned})
+            binned_df = pd.DataFrame({"WD_bin": wd_binned, "WS_bin": ws_binned})
 
             # Create a crosstab table to count the number of hours per bin
-            crosstab = pd.crosstab(binned_df['WD_bin'], binned_df['WS_bin'])
+            crosstab = pd.crosstab(binned_df["WD_bin"], binned_df["WS_bin"])
 
             # Store the crosstab table in the result dictionary
             result_tables[turbine] = crosstab.T
 
         data_arrays = [
-            xr.DataArray(table, dims=['wind_direction_bin', 'wind_speed_bin'], name=turbine)
+            xr.DataArray(
+                table, dims=["wind_direction_bin", "wind_speed_bin"], name=turbine
+            )
             for turbine, table in result_tables.items()
         ]
 
         # Concatenate these DataArrays along a new 'turbine' dimension
-        combined_da = xr.concat(data_arrays, dim=pd.Index(result_tables.keys(), name='turbine'))
+        combined_da = xr.concat(
+            data_arrays, dim=pd.Index(result_tables.keys(), name="turbine")
+        )
 
         return combined_da.fillna(0)
 
@@ -185,11 +218,21 @@ class WindSpeed:
         data = self.wind_speed.sel(turbine=turbine["name"])
 
         divider = make_axes_locatable(ax)
-        ax_windrose = divider.append_axes("right", size="100%", pad=0.0, axes_class=WindroseAxes)
+        ax_windrose = divider.append_axes(
+            "right", size="100%", pad=0.0, axes_class=WindroseAxes
+        )
 
-        ax_windrose.bar(data["WD10"], data["WS10"], normed=True, opening=0.8, edgecolor='white',
-                        bins=np.arange(0, 25, 5))
-        ax_windrose.set_legend(title=turbine["name"], loc="upper left", bbox_to_anchor=(1.2, 1.0))
+        ax_windrose.bar(
+            data["WD10"],
+            data["WS10"],
+            normed=True,
+            opening=0.8,
+            edgecolor="white",
+            bins=np.arange(0, 25, 5),
+        )
+        ax_windrose.set_legend(
+            title=turbine["name"], loc="upper left", bbox_to_anchor=(1.2, 1.0)
+        )
         return ax_windrose
 
     def create_wind_roses(self):
@@ -211,7 +254,7 @@ class WindSpeed:
             # Convert 1D index to 2D index
             row, col = np.unravel_index(i, (n_rows, 2))
             # Hide the original axes
-            axs[row, col].axis('off')
+            axs[row, col].axis("off")
             # Create a wind rose for this turbine
             self._create_wind_rose(turbine, axs[row, col])
 
@@ -221,35 +264,35 @@ class WindSpeed:
             fig.delaxes(axs[row, col])
 
         plt.show()
-        
-
 
     def download_weibull_coefficients(self):
-            weibull_data = {}
+        weibull_data = {}
 
-            for turbine in self.wind_turbines:
-                latitude, longitude = turbine["position"]
-                url = (f"https://wps.neweuropeanwindatlas.eu/api/microscale-atlas/v1/get-data-point"
-                       f"?latitude={latitude}&longitude={longitude}&height=100"
-                       f"&variable=weib_A_combined&variable=weib_k_combined")
+        for turbine in self.wind_turbines:
+            latitude, longitude = turbine["position"]
+            url = (
+                f"https://wps.neweuropeanwindatlas.eu/api/microscale-atlas/v1/get-data-point"
+                f"?latitude={latitude}&longitude={longitude}&height=100"
+                f"&variable=weib_A_combined&variable=weib_k_combined"
+            )
 
-                try:
-                    response = requests.get(url, timeout=20)
-                    response.raise_for_status()
-                except requests.RequestException as e:
-                    print(f"Request failed: {e}")
-                    continue
+            try:
+                response = requests.get(url, timeout=20)
+                response.raise_for_status()
+            except requests.RequestException as e:
+                print(f"Request failed: {e}")
+                continue
 
-                with netCDF4.Dataset("inmemory.nc", memory=response.content) as ds:
-                    # Assuming 'weib_A_combined' and 'weib_k_combined' are variable names in the dataset
-                    A = ds['weib_A_combined'][:]
-                    k = ds['weib_k_combined'][:]
+            with netCDF4.Dataset("inmemory.nc", memory=response.content) as ds:
+                # Assuming 'weib_A_combined' and 'weib_k_combined' are variable names in the dataset
+                A = ds["weib_A_combined"][:]
+                k = ds["weib_k_combined"][:]
 
-                    weibull_data[turbine["name"]] = {"A": A, "k": k}
-                    
-            # Set the weibull_params attribute
-            self.weibull_params = weibull_data
-            return weibull_data
+                weibull_data[turbine["name"]] = {"A": A, "k": k}
+
+        # Set the weibull_params attribute
+        self.weibull_params = weibull_data
+        return weibull_data
 
     def plot_weibull_wind_speed_distribution(self):
         wind_speeds = np.linspace(0, 25, 1000)  # Array of wind speeds from 0 to 25 m/s
@@ -258,8 +301,8 @@ class WindSpeed:
         sns.set_style("whitegrid")
 
         for turbine, params in self.weibull_params.items():
-            A = params['A'].data[0]
-            k = params['k'].data[0]
+            A = params["A"].data[0]
+            k = params["k"].data[0]
 
             # Calculate the PDF values for each wind speed
             pdf_values = weibull_min.pdf(wind_speeds, c=k, scale=A)
@@ -269,9 +312,13 @@ class WindSpeed:
 
             # Create the plot
             plt.figure(figsize=(10, 5))
-            plt.plot(wind_speeds, hours_per_year, label=f'Turbine: {turbine}\nA={A:.2f}, k={k:.2f}')
-            plt.xlabel('Wind Speed (m/s)')
-            plt.ylabel('Hours per Year')
-            plt.title('Wind Speed Distribution')
+            plt.plot(
+                wind_speeds,
+                hours_per_year,
+                label=f"Turbine: {turbine}\nA={A:.2f}, k={k:.2f}",
+            )
+            plt.xlabel("Wind Speed (m/s)")
+            plt.ylabel("Hours per Year")
+            plt.title("Wind Speed Distribution")
             plt.legend()
             plt.show()
