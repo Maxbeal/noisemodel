@@ -21,6 +21,7 @@ from tqdm import tqdm
 import skops.io as sio
 import xarray as xr
 from xarray import DataArray
+from py_wake.wind_turbines.generic_wind_turbines import GenericWindTurbine
 
 from . import DATA_DIR
 from .windspeed import WindSpeed
@@ -242,6 +243,7 @@ class WindTurbines:
         model_file: str = None,
         retrain_model: bool = False,
         dataset_file: str = None,
+
     ):
         """
         Initializes the WindTurbines object.
@@ -256,6 +258,7 @@ class WindTurbines:
         self.wind_turbines = check_wind_turbine_specs(wind_turbines)
         self.listeners = check_listeners(listeners)
         self.na = None
+        self.power_curves = self._generate_power_curves()
 
         if retrain_model:
             print("Retraining the model...")
@@ -404,3 +407,43 @@ class WindTurbines:
             wind_turbines=self.wind_turbines,
             listeners=self.listeners,
         )
+
+    def _generate_power_curves(self):
+        """
+        Generates the power curves for each wind turbine.
+        """
+        power_curves = {}
+        ws = np.arange(0, 25, 0.01)  # Wind speeds from 0 to 25 m/s
+
+        for turbine in self.wind_turbines:
+            gen_wt = GenericWindTurbine(
+                name=turbine["name"],
+                diameter=turbine["diameter"],
+                hub_height=turbine["hub height"],
+                power_norm=turbine["power"]
+            )
+            power_curves[turbine["name"]] = gen_wt.power(ws) * 1e-3
+
+        return power_curves
+
+    def plot_power_curves(self):
+        """
+        Plots the power curves for each wind turbine in small figures.
+        """
+        n_turbines = len(self.power_curves)
+        ws = np.arange(0, 25, 0.01)  # Wind speeds from 0 to 25 m/s
+
+        fig, axs = plt.subplots(1, n_turbines, figsize=(n_turbines * 5, 4))
+
+        if n_turbines == 1:
+            axs = [axs]
+
+        for ax, (name, power_curve) in zip(axs, self.power_curves.items()):
+            ax.plot(ws, power_curve, label=name)
+            ax.set_title(name)
+            ax.set_xlabel("Wind Speed [m/s]")
+            ax.set_ylabel("Power [kW]")
+            ax.grid(True)
+
+        plt.tight_layout()
+        plt.show()

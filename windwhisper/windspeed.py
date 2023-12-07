@@ -16,6 +16,13 @@ import json
 import netCDF4
 from scipy.stats import weibull_min
 import seaborn as sns
+import py_wake
+from py_wake.wind_turbines.generic_wind_turbines import GenericWindTurbine
+from py_wake.site.xrsite import XRSite
+from py_wake.deficit_models import *
+from py_wake.deficit_models.deficit_model import *
+from py_wake.superposition_models import *
+from py_wake.rotor_avg_models import *
 
 
 # path to tests/fixtures folder, with test being in the root folder
@@ -322,3 +329,50 @@ class WindSpeed:
             plt.title("Wind Speed Distribution")
             plt.legend()
             plt.show()
+
+    def run_simulation(self):
+        # Download Weibull coefficients for each turbine
+        weibull_data = self.download_weibull_coefficients()
+
+        total_aep = 0  # Initialize total AEP
+
+        for turbine in self.wind_turbines:
+            # Extract Weibull A and k values for the current turbine
+            A = float(weibull_data[turbine["name"]]["A"])
+            k = float(weibull_data[turbine["name"]]["k"])
+
+            # Creating a single sector with frequency 1
+            f = [1]
+            wd = [0]  # Single wind direction sector
+
+            # Create XRSite with Weibull distributed wind speed for the current turbine
+            site_ds = xr.Dataset({
+                'Sector_frequency': ('wd', f),
+                'Weibull_A': ('wd', [A]),
+                'Weibull_k': ('wd', [k])
+            }, coords={'wd': wd})
+
+            site = XRSite(ds=site_ds)
+
+            # Create and run wind farm model for the current turbine
+            # Note: Adjust the model as per the specific turbine's characteristics
+            # For instance, using GenericWindTurbine for each turbine
+            gen_wt = GenericWindTurbine(
+                name=turbine["name"],
+                diameter=turbine["diameter"],
+                hub_height=turbine["hub height"],
+                power_norm=turbine["power"],
+                turbulence_intensity=0.0
+            )
+
+            # Assuming x, y coordinates for the turbine are set
+            x = [turbine["position"][0]]  # Replace with actual coordinate
+            y = [turbine["position"][1]]  # Replace with actual coordinate
+
+            wfm = PropagateDownwind(site, [gen_wt], ...)
+            sim_res = wfm(x, y)
+
+            # Aggregate AEP
+            total_aep += sim_res.aep().sum()
+
+        return total_aep

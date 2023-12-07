@@ -70,7 +70,7 @@ class NoiseMap:
         if distance == 0:
             return dBsource
 
-        geometric_spreading_loss = 10 * np.log10(4 * np.pi * distance**2)
+        geometric_spreading_loss = 10 * np.log10(4 * np.pi * distance**2) + 11
         atmospheric_absorption_loss = self.alpha * distance
 
         total_attenuation = geometric_spreading_loss + atmospheric_absorption_loss
