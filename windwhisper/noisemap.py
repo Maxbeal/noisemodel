@@ -11,6 +11,8 @@ from shapely.geometry import LineString, Point
 import matplotlib.pyplot as plt
 import xarray as xr
 import math
+import pandas as pd
+from shapely.geometry import LineString
 
 from . import SECRETS
 
@@ -262,18 +264,13 @@ class NoiseMap:
         # Display the map
         display(m)
 
-    def get_landuse_between_points(self, turbine_name, observation_point):
-        # Find the position of the turbine by its name
-        turbine_position = next(
-            (
-                turbine["position"]
-                for turbine in self.wind_turbines
-                if turbine["name"] == turbine_name
-            ),
-            None,
-        )
-        if not turbine_position:
-            raise ValueError(f"No turbine found with the name {turbine_name}")
+    def get_landuse_between_points(self):
+        # Use the first turbine and the first listener
+        if not self.wind_turbines or not self.listeners:
+            raise ValueError("Wind turbines or listeners not properly initialized")
+
+        turbine_position = self.wind_turbines[0]['position']
+        observation_point = self.listeners[0]['position']
 
         # Get the bounding box coordinates
         north, south = max(turbine_position[0], observation_point[0]), min(
@@ -284,17 +281,48 @@ class NoiseMap:
         )
 
         # Fetch land use data
-        landuse = ox.features_from_bbox(
+        landuse_data = ox.features_from_bbox(
             north, south, east, west, tags={"landuse": True}
         )
-        return landuse
 
-    def plot_landuse_for_turbines_and_observation_points(
-        self, wind_turbines, observation_points
-    ):
+        # Assuming landuse_data is a DataFrame, extract only the 'landuse' column
+        # If landuse_data is not a DataFrame, you would need to convert it first
+        if isinstance(landuse_data, pd.DataFrame):
+            return landuse_data['landuse']
+        else:
+            # Convert to DataFrame if not already one, and then return the 'landuse' column
+            df = pd.DataFrame(landuse_data)
+            return df['landuse']
+
+    def get_landuse_along_line(self):
+        if not self.wind_turbines or not self.listeners:
+            raise ValueError("Wind turbines or listeners not properly initialized")
+
+        # Create a LineString from the first turbine to the first listener
+        line = LineString([self.wind_turbines[0]['position'], self.listeners[0]['position']])
+
+        # Buffer the line slightly to create a 'corridor' to search for landuse within
+        buffer_distance = 0.001  # This is roughly 100 meters. Adjust as necessary for your use case.
+        buffered_line = line.buffer(buffer_distance)
+
+        # Use the buffered line to fetch land use data
+        try:
+            landuse_data = ox.geometries_from_polygon(buffered_line, tags={"landuse": True})
+        except Exception as e:
+            raise ValueError(f"Error fetching land use data: {e}")
+
+        # Check if landuse_data is empty or if no landuse tags were found
+        if landuse_data.empty:
+            return pd.Series(dtype='object')  # Return an empty Series if no data found
+
+        # Assuming landuse_data is a GeoDataFrame, return the 'landuse' column
+        return landuse_data['landuse']
+
+    def plot_landuse_for_turbines_and_observation_points(self):
         # Extract turbine positions and combine with observation points
-        turbine_positions = [turbine["position"] for turbine in wind_turbines]
-        all_points = turbine_positions + observation_points
+        turbine_positions = [turbine["position"] for turbine in self.wind_turbines]
+        observation_positions = [listener["position"] for listener in self.listeners]
+        all_points = turbine_positions + observation_positions
 
         # Create GeoDataFrame for all points
         gdf_points = gpd.GeoDataFrame(
@@ -324,17 +352,17 @@ class NoiseMap:
             color=landuse["landuse"].map(color_map), figsize=(12, 12)
         )
         gdf_points.iloc[: len(turbine_positions)].to_crs(epsg=3857).plot(
-            ax=ax, color="blue", markersize=100, label="Éoliennes"
+            ax=ax, color="blue", markersize=100, label="Wind Turbines"
         )
         gdf_points.iloc[len(turbine_positions) :].to_crs(epsg=3857).plot(
-            ax=ax, color="red", markersize=100, label="Points d'observation"
+            ax=ax, color="red", markersize=100, label="Observation Points"
         )
 
         # Plot lines between turbine positions and observation points
         lines = [
             LineString([turbine[::-1], observation[::-1]])
             for turbine in turbine_positions
-            for observation in observation_points
+            for observation in observation_positions
         ]
         gpd.GeoSeries(lines, crs="EPSG:4326").to_crs(epsg=3857).plot(
             ax=ax, color="black", linewidth=1
@@ -357,19 +385,42 @@ class NoiseMap:
             handles=patches
             + [
                 plt.Line2D(
-                    [0], [0], marker="o", color="blue", label="Éoliennes", markersize=10
+                    [0], [0], marker="o", color="blue", label="Wind Turbines", markersize=10
                 ),
                 plt.Line2D(
                     [0],
                     [0],
                     marker="o",
                     color="red",
-                    label="Points d'observation",
+                    label="Observation Points",
                     markersize=10,
                 ),
             ],
-            title="Légende",
+            title="Legend",
         )
+        # Add labels for wind turbines
+        for turbine in self.wind_turbines:
+            position = turbine["position"]
+            plt.annotate(turbine["name"],
+                         xy=(position[1], position[0]),
+                         xytext=(3, 3),
+                         textcoords="offset points",
+                         ha='right', va='bottom')
+
+        # Add labels for listeners
+        for listener in self.listeners:
+            position = listener["position"]
+            plt.annotate(listener["name"],
+                         xy=(position[1], position[0]),
+                         xytext=(3, 3),
+                         textcoords="offset points",
+                         ha='right', va='bottom')
+
+        # Add labels for axes
+        plt.xlabel('Longitude')
+        plt.ylabel('Latitude')
+
+        # Show the plot
         plt.show()
 
     def get_altitudes_between_points(self, point1, point2, num_samples=100):
@@ -391,37 +442,55 @@ class NoiseMap:
 
         return altitudes
 
-    def plot_relief_between_points(self, wind_turbines_names, observation_points_names):
-        for turbine_name in wind_turbines_names:
-            turbine_position = next(
-                (
-                    turbine["position"]
-                    for turbine in self.wind_turbines
-                    if turbine["name"] == turbine_name
-                ),
-                None,
-            )
-            if turbine_position is None:
-                continue  # Skip if turbine name not found
+    def plot_relief_between_points(self):
+        # Iterate through each noise data entry
+        for noise_data in self.individual_noise:
+            turbine_name = noise_data['turbine_name']
+            listener_name = noise_data['listener_name']
+            distance = noise_data['distance']
 
-            for listener_name in observation_points_names:
-                listener = next(
-                    (
-                        listener
-                        for listener in self.listeners
-                        if listener["name"] == listener_name
-                    ),
-                    None,
-                )
-                if listener is None:
-                    continue  # Skip if listener name not found
+            # Get the position of the turbine and listener from the noise data
+            turbine_position = noise_data['turbine_position']
+            listener_position = noise_data['listener_position']
 
-                altitudes = self.get_altitudes_between_points(
-                    turbine_position, listener["position"]
-                )
-                plt.figure(figsize=(5, 3))
-                plt.plot(altitudes)
-                plt.title(f"Relief between {turbine_name} and {listener_name}")
-                plt.xlabel("Intermediate Points")
-                plt.ylabel("Altitude (m)")
-                plt.show()
+            # Retrieve the altitudes between the turbine and the listener
+            altitudes = self.get_altitudes_between_points(turbine_position, listener_position)
+
+            # Generate the x-axis as an array of distances
+            num_points = len(altitudes)
+            distance_array = np.linspace(0, distance, num_points)
+
+            # Determine the min and max altitude for the y-axis range
+            min_altitude = min(altitudes) - 50  # Adding a small buffer below the minimum
+            max_altitude = max(altitudes) + 50  # Adding a small buffer above the maximum
+
+            # Plot the altitudes against the distance
+            plt.figure(figsize=(12, 6))
+            plt.plot(distance_array, altitudes, linewidth=2, color='navy')  # Solid line, no markers
+            plt.fill_between(distance_array, altitudes, color='skyblue', alpha=0.3)  # Fill under the curve
+
+            # Annotate turbine and listener positions
+            plt.scatter(0, altitudes[0], color='green', zorder=5)  # Turbine marker
+            plt.scatter(distance, altitudes[-1], color='red', zorder=5)  # Listener marker
+
+            # Improved annotation
+            plt.annotate(turbine_name, (0, altitudes[0]),
+                         textcoords="offset points", xytext=(-15, 10), ha='center',
+                         bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="green", lw=2))
+
+            plt.annotate(listener_name, (distance, altitudes[-1]),
+                         textcoords="offset points", xytext=(-15, 10), ha='center')
+
+            plt.title(f"Topography between {turbine_name} and {listener_name}", fontsize=16)
+            plt.xlabel("Distance (m)", fontsize=14)
+            plt.ylabel("Altitude (m)", fontsize=14)
+            plt.grid(True)
+            plt.tick_params(axis='both', which='major', labelsize=12)
+
+            # Set the y-axis limits
+            plt.ylim(min_altitude, max_altitude)
+
+            plt.show()
+
+
+
