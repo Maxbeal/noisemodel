@@ -253,8 +253,6 @@ class NoiseAnalysis:
         # Optionally, you can return the updated listeners list
         return self.listeners
 
-    import folium
-
     def display_listeners_on_map_with_Lden(self):
         icon_file_path = str(DATA_DIR / "pictures" / "icon_turbine.png")
         house_green_file_path = str(DATA_DIR / "pictures" / "house_green.png")

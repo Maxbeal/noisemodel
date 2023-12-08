@@ -294,29 +294,6 @@ class NoiseMap:
             df = pd.DataFrame(landuse_data)
             return df['landuse']
 
-    def get_landuse_along_line(self):
-        if not self.wind_turbines or not self.listeners:
-            raise ValueError("Wind turbines or listeners not properly initialized")
-
-        # Create a LineString from the first turbine to the first listener
-        line = LineString([self.wind_turbines[0]['position'], self.listeners[0]['position']])
-
-        # Buffer the line slightly to create a 'corridor' to search for landuse within
-        buffer_distance = 0.001  # This is roughly 100 meters. Adjust as necessary for your use case.
-        buffered_line = line.buffer(buffer_distance)
-
-        # Use the buffered line to fetch land use data
-        try:
-            landuse_data = ox.geometries_from_polygon(buffered_line, tags={"landuse": True})
-        except Exception as e:
-            raise ValueError(f"Error fetching land use data: {e}")
-
-        # Check if landuse_data is empty or if no landuse tags were found
-        if landuse_data.empty:
-            return pd.Series(dtype='object')  # Return an empty Series if no data found
-
-        # Assuming landuse_data is a GeoDataFrame, return the 'landuse' column
-        return landuse_data['landuse']
 
     def plot_landuse_for_turbines_and_observation_points(self):
         # Extract turbine positions and combine with observation points
@@ -331,10 +308,10 @@ class NoiseMap:
 
         # Extract latitude and longitude for bounding box calculation
         all_lats, all_lons = zip(*all_points)
-        margin = 0.01
+        margin = 0.005
         bbox = dict(
             north=max(all_lats) + margin,
-            south=min(all_lats) - margin,
+            south=min(all_lats) - margin/2,
             east=max(all_lons) + margin,
             west=min(all_lons) - margin,
         )
@@ -392,7 +369,7 @@ class NoiseMap:
                     [0],
                     marker="o",
                     color="red",
-                    label="Observation Points",
+                    label="Receiver",
                     markersize=10,
                 ),
             ],
@@ -419,6 +396,9 @@ class NoiseMap:
         # Add labels for axes
         plt.xlabel('Longitude')
         plt.ylabel('Latitude')
+
+        # Save the plot before displaying it
+        plt.savefig('landuse.png')  # Saves the plot as a PNG file in the current working directory
 
         # Show the plot
         plt.show()
