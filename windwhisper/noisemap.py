@@ -123,7 +123,7 @@ class NoiseMap:
         lon_max = max(
             turbine["turbine_position"][1] for turbine in self.individual_noise
         )
-        margin = (1/250)
+        margin = (0)
 
         # Adjust the map size to include observation points
         for point in self.individual_noise:
