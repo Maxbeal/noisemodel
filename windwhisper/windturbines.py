@@ -14,7 +14,7 @@ from joblib import dump, load
 from sklearn.base import RegressorMixin
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.impute import SimpleImputer, KNNImputer
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.model_selection import train_test_split
 from sklearn.multioutput import MultiOutputRegressor
 from tqdm import tqdm
@@ -22,6 +22,8 @@ import skops.io as sio
 import xarray as xr
 from xarray import DataArray
 from py_wake.wind_turbines.generic_wind_turbines import GenericWindTurbine
+from scipy.stats import pearsonr
+
 
 from . import DATA_DIR
 from .windspeed import WindSpeed
@@ -39,11 +41,11 @@ def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, Lis
     if file_path is None:
         file_path = Path(DATA_DIR / "training_data" / "noise_wind_turbines.csv")
 
-    # check that the file exists
+    # Check that the file exists
     if not Path(file_path).exists():
         raise FileNotFoundError(f"The file '{file_path}' was not found.")
 
-    # file extension must be .csv
+    # File extension must be .csv
     if Path(file_path).suffix != ".csv":
         raise ValueError(f"The file extension for '{file_path}' must be '.csv'.")
 
@@ -63,6 +65,7 @@ def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, Lis
     # Separate input and output data
     X = df[["Power", "Diameter", "hub height [m]"]]
     Y = df[noise_cols]
+    print("Number of observations in whole set:", Y.shape[0])
 
     # Convert non-numeric values in 'X' to NaN
     X = X.apply(pd.to_numeric, errors="coerce")
@@ -78,10 +81,11 @@ def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, Lis
     imputer_Y = KNNImputer(n_neighbors=5)
     Y = pd.DataFrame(imputer_Y.fit_transform(Y), columns=Y.columns)
 
-    # Split the data into training and tests sets
+    # Split the data into training and test sets
     X_train, X_test, Y_train, Y_test = train_test_split(
         X, Y, test_size=0.2, random_state=42
     )
+    print("Number of observations in test set:", X_test.shape[0])
 
     # Create and train the multi-output model
     model = MultiOutputRegressor(HistGradientBoostingRegressor())
@@ -89,18 +93,24 @@ def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, Lis
 
     # Predict and evaluate the model
     Y_pred = model.predict(X_test.values)
-    mse = mean_squared_error(Y_test, Y_pred, multioutput="raw_values")
 
-    for i, column in enumerate(Y.columns):
-        print(f"Mean Squared Error for {column}: {mse[i]}")
+    # Calculate Mean Squared Error (MSE)
+    mse = mean_squared_error(Y_test, Y_pred, multioutput="raw_values")
+    print("Mean Squared Error (MSE):", mse)
+
+    # Calculate Root Mean Squared Error (RMSE)
+    rmse = np.sqrt(mse)
+    print("Root Mean Squared Error (RMSE):", rmse)
+
 
     # Save the trained model for future use
     sio.dump(obj=(model, noise_cols), file=f"{Path(DATA_DIR / 'default_model')}.skops")
 
-    # print the location of the saved model
+    # Print the location of the saved model
     print(f"Trained model saved to {Path(DATA_DIR / 'default_model')}.skops")
 
     return model, noise_cols
+
 
 
 def load_model(filepath=None) -> Tuple[RegressorMixin, List[str]]:
@@ -447,3 +457,6 @@ class WindTurbines:
 
         plt.tight_layout()
         plt.show()
+
+
+
