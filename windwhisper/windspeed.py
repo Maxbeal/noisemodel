@@ -70,14 +70,18 @@ class WindSpeed:
 
         attempts = 0
         max_attempts = 10
+        total_size_kb = 0  # Initialize a variable to store the total size
 
         while attempts < max_attempts:
             try:
                 response = requests.get(url, timeout=25)
                 if response.status_code == 200:
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".nc", delete=False
-                    ) as tmp_file:
+                    size_kb = len(response.content) / 1024  # Calculate the size of the response in kilobytes
+                    total_size_kb += size_kb  # Add the size of this response to the total
+                    print(
+                        f"Downloaded {size_kb:.2f} kB for {turbine['name']}")  # Optional: Print the size for this turbine
+
+                    with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp_file:
                         tmp_file.write(response.content)
                         tmp_file_path = tmp_file.name
                     ds = xr.open_dataset(tmp_file_path)
@@ -86,7 +90,7 @@ class WindSpeed:
                     ds_simplified = ds[["WD10", "WS10"]].copy()
                     ds_simplified.attrs.clear()
 
-                    return ds_simplified  # Return the simplified dataset
+                    return ds_simplified, size_kb # Return the simplified dataset
                 else:
                     raise Exception(
                         f"Error downloading data for {turbine['name']}. Status code: {response.status_code}"
@@ -103,32 +107,41 @@ class WindSpeed:
 
     def download_data(self) -> xr.DataArray:
         print("Starting concurrent data download for all turbines...")
-        dataframes = {}
+        total_download_size_kb = 0  # Initialize total download size
+
+        # Create a dictionary to store the dataframes for each turbine
+        turbine_data = {}
 
         # Use ThreadPoolExecutor to download data concurrently
-        with ThreadPoolExecutor(
-            max_workers=1
-        ) as executor:  # Adjust max_workers as needed
-            futures = [
-                executor.submit(self._download_single_turbine_data, turbine)
-                for turbine in self.wind_turbines
-            ]
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            # Create a future for each turbine
+            futures = {executor.submit(self._download_single_turbine_data, turbine): turbine for turbine in
+                       self.wind_turbines}
 
-            # Wait for all futures to complete
-            results = [future.result() for future in futures]
+            for future in as_completed(futures):
+                # Get the turbine information
+                turbine = futures[future]
 
-            # store the results in a xr.DataArray
-            # with dimensions turbine and time
-            arr = xr.concat(results, dim="turbine")
-            arr = arr.assign_coords(
-                turbine=[turbine["name"] for turbine in self.wind_turbines]
-            )
+                try:
+                    # Get the result from the future
+                    ds_simplified, size_kb = future.result()
+                    total_download_size_kb += size_kb  # Add the size of this download to the total
 
-        # remove all coordinates except "turbine" and "time"
-        arr = arr.reset_coords(drop=True)
+                    # Store the data in the dictionary with the turbine's name as the key
+                    turbine_data[turbine["name"]] = ds_simplified
+                except Exception as exc:
+                    print(f'{turbine["name"]} generated an exception: {exc}')
+
+        # Concatenate the dataframes along a new 'turbine' dimension
+        all_data = xr.concat(turbine_data.values(), dim=pd.Index(turbine_data.keys(), name="turbine"))
+
+        # Reset all coordinates except "turbine" and "time"
+        all_data = all_data.reset_coords(drop=True)
+
+        print(f"Total download size: {total_download_size_kb:.2f} kB")  # Print the total download size
         print("Done.")
 
-        return arr
+        return all_data
 
     def calculate_mean_speed(self) -> xr.DataArray:
         """
