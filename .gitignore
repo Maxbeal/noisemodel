@@ -2,6 +2,7 @@
 *.egg-info/
 logs/
 *.egg/
+tests/fixtures/*.nc
 build/
 dist/
 data/export/

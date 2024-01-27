@@ -33,7 +33,7 @@ def package_files(directory):
 setup(
     name="WindWhisper",
     version="0.0.1",
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     packages=packages,
     author="Maxime Balandret, Romain Sacchi",
     author_email="maxime.balandret@psi.ch, romain.sacchi@psi.ch",
@@ -55,7 +55,8 @@ setup(
         "skops",
         "matplotlib",
         "netCDF4",
-        "seaborn"
+        "seaborn",
+        "py_wake",
     ],
     url="https://github.com/MaximeBalandret/noisemodel",
     description="Noise modelling of wind turbines",

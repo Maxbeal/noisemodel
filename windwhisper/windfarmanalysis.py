@@ -56,7 +56,7 @@ class WindFarmAnalysis:
 
     def _predict_noise(self, turbine):
         print(f"Processing {turbine['name']}...")
-        noise_prediction = self.wind_turbine_model.predict_noise(turbine['power'], turbine['diameter'], turbine['hub_height'])
+        noise_prediction = self.wind_turbine_model.fetch_noise_level_vs_wind_speed(turbine['power'], turbine['diameter'], turbine['hub_height'])
         
         if self.display_outputs:
             print(f"Noise prediction for {turbine['name']}:\n")

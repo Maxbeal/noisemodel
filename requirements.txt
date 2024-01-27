@@ -12,3 +12,4 @@ skops
 matplotlib
 netCDF4
 seaborn
+py_wake

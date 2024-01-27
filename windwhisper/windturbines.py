@@ -112,7 +112,6 @@ def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, Lis
     return model, noise_cols
 
 
-
 def load_model(filepath=None) -> Tuple[RegressorMixin, List[str]]:
     """
     Loads the trained model from the 'default_model.joblib' file.
@@ -133,73 +132,72 @@ def load_model(filepath=None) -> Tuple[RegressorMixin, List[str]]:
     return model, noise_cols
 
 
-def check_wind_turbine_specs(wind_turbines: List[Dict]) -> List[Dict]:
+def check_wind_turbine_specs(wind_turbines: dict) -> dict:
     """
-    Check that teh list of dictionaries contain all the needed keys.
+    Check that the dictionary contain all the needed keys.
     :param wind_turbines: list of dictionaries with turbines specifics
     :return: None or Exception
     """
 
-    mandatory_fields = ["name", "power", "diameter", "hub height", "position"]
+    mandatory_fields = ["power", "diameter", "hub height", "position"]
 
-    for turbine in wind_turbines:
-        for field in mandatory_fields:
-            try:
-                turbine[field]
-            except KeyError:
-                raise KeyError(
-                    f"Missing field '{field}' in turbine {turbine['name']}"
-                ) from None
+    for turbine, specs in wind_turbines.items():
+        if not all(
+            x in specs for x in mandatory_fields
+        ):  # check that all mandatory fields are present
+            raise KeyError(
+                f"Missing mandatory field(s) in turbine {turbine}."
+            )
 
     # check that `power`, `diameter` and `hub height` are numeric
     # and positive
 
-    for turbine in wind_turbines:
+    for turbine, specs in wind_turbines.items():
         for field in ["power", "diameter", "hub height"]:
             try:
-                turbine[field] = float(turbine[field])
+                specs[field] = float(specs[field])
             except ValueError:
                 raise ValueError(
-                    f"The field '{field}' in turbine {turbine['name']} must be numeric."
+                    f"The field '{field}' in turbine {turbine} must be numeric."
                 ) from None
 
-            if turbine[field] <= 0:
+            if specs[field] <= 0:
                 raise ValueError(
-                    f"The field '{field}' in turbine {turbine['name']} must be positive."
+                    f"The field '{field}' in turbine {turbine} must be positive."
                 )
 
     # check that the radius is inferior to the hub height
-    for turbine in wind_turbines:
-        if turbine["diameter"] / 2 > turbine["hub height"]:
+    for turbine, specs in wind_turbines.items():
+        if specs["diameter"] / 2 > specs["hub height"]:
             raise ValueError(
-                f"The radius of turbine {turbine['name']} must be inferior to its hub height."
+                f"The radius of turbine {turbine} must be inferior to its hub height."
             )
 
     # check that `hub height` is inferior to 300 m and that `power`
     # is inferior to 20 MW
-    for turbine in wind_turbines:
-        if turbine["hub height"] > 300:
+    for turbine, specs in wind_turbines.items():
+        if specs["hub height"] > 300:
             raise ValueError(
-                f"The hub height of turbine {turbine['name']} must be inferior to 300 m."
+                f"The hub height of turbine {turbine} must be inferior to 300 m."
             )
-        if turbine["power"] > 20000:
+        if specs["power"] > 20000:
             raise ValueError(
-                f"The power of turbine {turbine['name']} must be inferior to 20 MW."
+                f"The power of turbine {turbine} must be inferior to 20 MW."
             )
 
     # check that the value for `position`is a tuple of two floats
-    for turbine in wind_turbines:
-        if not isinstance(turbine["position"], tuple):
+    for turbine, specs in wind_turbines.items():
+        if not isinstance(specs["position"], tuple):
             raise ValueError(
-                f"The position of turbine {turbine['name']} must be a tuple."
+                f"The position of turbine {turbine} must be a tuple."
             )
-        if len(turbine["position"]) != 2:
+        if len(specs["position"]) != 2:
             raise ValueError(
-                f"The position of turbine {turbine['name']} must contain two values."
+                f"The position of turbine {turbine} must contain two values."
             )
-        if not all(isinstance(x, float) for x in turbine["position"]):
+        if not all(isinstance(x, float) for x in specs["position"]):
             raise ValueError(
-                f"The position of turbine {turbine['name']} must contain two floats."
+                f"The position of turbine {turbine} must contain two floats."
             )
 
     return wind_turbines
@@ -212,30 +210,28 @@ def check_listeners(listeners):
     :return: None or Exception
     """
 
-    mandatory_fields = ["name", "position"]
+    mandatory_fields = ["position",]
 
-    for listener in listeners:
-        for field in mandatory_fields:
-            try:
-                listener[field]
-            except KeyError:
-                raise KeyError(
-                    f"Missing field '{field}' in listener {listener['name']}"
-                ) from None
+    for listener, specs in listeners.items():
+        if not all(
+            x in specs for x in mandatory_fields
+        ):
+            raise KeyError(
+                f"Missing mandatory field(s) in listener {listener}."
+            )
 
-    # check that the value for `position`is a tuple of two floats
-    for listener in listeners:
-        if not isinstance(listener["position"], tuple):
+        # check that the value for `position`is a tuple of two floats
+        if not isinstance(specs["position"], tuple):
             raise ValueError(
-                f"The position of listener {listener['name']} must be a tuple."
+                f"The position of listener {listener} must be a tuple."
             )
-        if len(listener["position"]) != 2:
+        if len(specs["position"]) != 2:
             raise ValueError(
-                f"The position of listener {listener['name']} must contain two values."
+                f"The position of listener {listener} must contain two values."
             )
-        if not all(isinstance(x, float) for x in listener["position"]):
+        if not all(isinstance(x, float) for x in specs["position"]):
             raise ValueError(
-                f"The position of listener {listener['name']} must contain two floats."
+                f"The position of listener {listener} must contain two floats."
             )
 
     return listeners
@@ -248,11 +244,12 @@ class WindTurbines:
 
     def __init__(
         self,
-        wind_turbines: List[Dict],
-        listeners: List[Dict] = None,
+        wind_turbines: dict,
+        listeners: dict = None,
         model_file: str = None,
         retrain_model: bool = False,
         dataset_file: str = None,
+        wind_speed_data: xr.DataArray | str = None,
 
     ):
         """
@@ -265,10 +262,10 @@ class WindTurbines:
 
         self.noise_map = None
         self.ws = None
+        self.noise_analysis = None
         self.wind_turbines = check_wind_turbine_specs(wind_turbines)
         self.listeners = check_listeners(listeners)
-        self.na = None
-        self.power_curves = self._generate_power_curves()
+        self.fetch_wind_speeds(wind_speed_data)
 
         if retrain_model:
             print("Retraining the model...")
@@ -276,15 +273,19 @@ class WindTurbines:
         else:
             try:
                 self.model, self.noise_cols = load_model(model_file)
-            except:
+            except FileNotFoundError:
                 self.model, self.noise_cols = train_wind_turbine_model(dataset_file)
 
-        self.noise = self.predict_noise()
+        self.fetch_noise_level_vs_wind_speed()
+        self.fetch_noise_map()
 
-    def predict_noise(self) -> DataArray:
-        """Predicts noise levels based on turbine specifications for multiple turbines.
+    def fetch_noise_level_vs_wind_speed(self):
+        """
+        Predicts noise levels based on turbine specifications for
+        multiple turbines.
 
-        :return: A DataFrame containing the noise predictions for each turbine.
+        :return: A DataFrame containing the noise predictions
+        for each turbine.
         """
 
         # create xarray that stores the parameters for the list
@@ -296,7 +297,7 @@ class WindTurbines:
             np.zeros((len(self.wind_turbines), len(self.noise_cols))),
             dims=("turbine", "wind_speed"),
             coords={
-                "turbine": [turbine["name"] for turbine in self.wind_turbines],
+                "turbine": list(self.wind_turbines.keys()),
                 "wind_speed": [
                     float(re.findall(pattern, s)[0]) for s in self.noise_cols
                 ],
@@ -310,47 +311,24 @@ class WindTurbines:
         # to be able to pass it to the model
         arr_input = np.array(
             [
-                [turbine["power"], turbine["diameter"], turbine["hub height"]]
-                for turbine in self.wind_turbines
+                [specs["power"], specs["diameter"], specs["hub height"]]
+                for turbine, specs in self.wind_turbines.items()
             ]
         )
 
         # predict the noise values
         arr.values = self.model.predict(arr_input)
+        arr.loc[
+            dict(wind_speed=arr.wind_speed < 3)
+        ] = 0  # set noise to 0 for wind speeds < 3 m/s
 
-        return arr
-
-    def predict_noise_at_wind_speed(
-        self, wind_speed: [float, list, np.array]
-    ) -> xr.DataArray:
-        """
-        Predicts noise levels at a specific wind speed
-        for multiple turbines.
-        :param wind_speed: Wind speed in m/s.
-        :return: A xr.DataArray containing the noise predictions for each turbine.
-        """
-
-        if not isinstance(wind_speed, np.ndarray):
-            wind_speed = np.array(wind_speed)
-
-        wind_speed = np.clip(wind_speed, 0, 25)
-
-        results = self.noise.interp(
-            wind_speed=wind_speed,
-            kwargs={"fill_value": "extrapolate"},
-        ).clip(0, None)
-
-        results.loc[{"wind_speed": wind_speed < 3}] = 0
-
-        return results
+        for turbine, specs in self.wind_turbines.items():
+            specs["noise_vs_wind_speed"] = arr.loc[dict(turbine=turbine)]
 
     def plot_noise_curve(self):
         """
         Plots noise levels for all wind speeds between 3 and 12 m/s.
         """
-
-        predictions = self.predict_noise_at_wind_speed(np.arange(3, 12, 0.5))
-        df = predictions.to_dataframe("val").unstack()["val"].T
 
         # Different line styles and markers
         line_styles = ["-", "--", "-.", ":"]
@@ -358,10 +336,12 @@ class WindTurbines:
 
         fig, ax = plt.subplots(figsize=(10, 6))
 
-        for i, col in enumerate(df.columns):
+        i = 0
+        for turbine, specs in self.wind_turbines.items():
             style = line_styles[i % len(line_styles)]
             marker = markers[i % len(markers)]
-            ax.plot(df.index, df[col], linestyle=style, marker=marker, label=col)
+            ax.plot(specs["noise_vs_wind_speed"], linestyle=style, marker=marker, label=turbine)
+            i += 1
 
         plt.title("Noise vs Wind Speed")
         plt.xlabel("Wind Speed (m/s)")
@@ -371,52 +351,35 @@ class WindTurbines:
         plt.tight_layout()
         plt.show()
 
-    def fetch_wind_speeds(self, start_year=None, end_year=None, debug=False):
+    def fetch_wind_speeds(self, wind_speed_data: xr.DataArray | str = None):
         """
-        Fetches wind speeds for a given range of years and stores the data in the
-        WindSpeed instance.
+        Fetches the wind speed data. Either the wind speed data is provided
+        as an argument to the constructor, or it is loaded from
+        tests/fixtures/era5_mean_2013-2022_month_by_hour.nc
+        or, as a last resort, it is downloaded from the internet.
 
-        Args:
-            start_year (int, optional): The starting year for data fetching. If not
-                                         provided, defaults to 2016.
-            end_year (int, optional): The ending year for data fetching. If not
-                                       provided, defaults to 2017.
-            debug (bool, optional): A flag used to control the data loading mechanism in
-                                     the WindSpeed instance. When True, data is loaded
-                                     from a local file, otherwise data is downloaded from
-                                     an external source. Default is False.
-
-        Returns:
-            None
+        :return: Updated wind_turbines with wind speed data.
         """
-        start_year = start_year or 2016
-        end_year = end_year or 2017
 
-        self.ws = WindSpeed(
+        self.wind_turbines = WindSpeed(
             wind_turbines=self.wind_turbines,
-            start_year=start_year,
-            end_year=end_year,
-            debug=debug,
-        )
-
-    def plot_wind_rose(self):
-        self.ws.create_wind_roses()
+            wind_speed_data=wind_speed_data,
+        ).wind_turbines
 
     def fetch_noise_map(self):
         self.noise_map = NoiseMap(
             wind_turbines=self.wind_turbines,
-            noise=self.noise,
             listeners=self.listeners,
         )
 
     def analyze_noise(self):
-        self.na = NoiseAnalysis(
-            wind_speed=self.ws.wind_speed,
-            noise=self.noise,
+        self.noise_analysis = NoiseAnalysis(
             noise_map=self.noise_map,
             wind_turbines=self.wind_turbines,
             listeners=self.listeners,
         )
+        self.wind_turbines = self.noise_analysis.wind_turbines
+        self.listeners = self.noise_analysis.listeners
 
     def _generate_power_curves(self):
         """
