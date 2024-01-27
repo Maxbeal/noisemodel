@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import xarray as xr
 import folium
@@ -7,7 +6,69 @@ from datetime import datetime
 
 from . import DATA_DIR
 
-MAX_WIND_SPEED = 30  # Assumes max wind speed is 30 m/s
+
+def compute_lden(data):
+    lden_values = {}
+
+    for listener, vals in data.items():
+        # Convert dB values to power, average them, and convert back to dB for each period
+
+        # Convert dB to power, apply weightings, and sum
+
+        l_den_power = (
+            (
+                12
+                * 10
+                ** (
+                    np.nanmean(
+                        np.where(
+                            (vals.hour.values > 7) & (vals.hour.values <= 19),
+                            vals,
+                            np.nan,
+                        )
+                        / 10
+                    )
+                )
+            )
+            + (
+                4
+                * 10
+                ** (
+                    np.nanmean(
+                        np.where(
+                            (vals.hour.values > 19) & (vals.hour.values <= 23),
+                            vals,
+                            np.nan,
+                        )
+                        + 5
+                    )
+                    / 10
+                )
+            )
+            + (
+                8
+                * 10
+                ** (
+                    np.nanmean(
+                        np.where(
+                            (vals.hour.values > 0) & (vals.hour.values <= 7),
+                            vals,
+                            np.nan,
+                        )
+                        + 10
+                    )
+                    / 10
+                )
+            )
+        )
+
+        # Convert back to dB to get L_den
+        l_den = 10 * np.log10(l_den_power / 24)
+
+        # Store L_den value for this listener
+        lden_values[listener] = np.round(l_den, 1)
+
+    return lden_values
 
 
 class NoiseAnalysis:
@@ -28,9 +89,8 @@ class NoiseAnalysis:
         # Step 2: Calculate the cumulative dB
         cumulative_dB = self.calculate_cumulative_dB(interpolated_noise)
         # Step 3: Separate sound emissions into day, evening, and night
-        # noise_separated = self.separate_noise_emissions(cumulative_dB)
         # Step 4: Calculate L_den for each listener
-        l_den = self.compute_lden(cumulative_dB)
+        l_den = compute_lden(cumulative_dB)
         # Step 5: Update wt.listeners with L_den values
         self.update_listeners_with_lden(l_den)
 
@@ -92,9 +152,11 @@ class NoiseAnalysis:
         # Loop over each listener in the class's listeners list.
         for listener in self.listeners:
             # This dictionary comprehension filters the interpolated noise data for each listener.
-            # It iterates over all items in the interpolated_noise dictionary, where each item's key is a tuple (lstnr, turbine).
-            # The comprehension includes only those items where the listener part of the key matches the current listener_name.
-            # The resulting dictionary, listener_data, maps each turbine associated with the current listener to its respective noise data.
+            # It iterates over all items in the interpolated_noise dictionary, where each item's
+            # key is a tuple (lstnr, turbine). The comprehension includes only those items
+            # where the listener part of the key matches the current listener_name.
+            # The resulting dictionary, listener_data, maps each turbine associated with
+            # the current listener to its respective noise data.
 
             listener_data = {
                 turbine: data
@@ -128,89 +190,26 @@ class NoiseAnalysis:
 
         # Loop over each listener
         for listener in self.listeners:
-            listener_name = listener["name"]
             # Find the distance to each turbine and get the minimum
             min_distance = min(
-                self.distance_data[(turbine["name"], listener_name)]["distance"]
+                self.distance_data[(turbine, listener)]["distance"]
                 for turbine in self.wind_turbines
             )
-            closest_turbine_distance[listener_name] = min_distance
+            closest_turbine_distance[listener] = min_distance
 
         return closest_turbine_distance
-
-    def compute_lden(self, data):
-        lden_values = {}
-
-        for listener, vals in data.items():
-            # Convert dB values to power, average them, and convert back to dB for each period
-            # L_day_avg = 10 * np.log10((10 ** (values["day"] / 10)).mean())
-            # L_evening_avg = 10 * np.log10((10 ** (values["evening"] / 10)).mean())
-            # L_night_avg = 10 * np.log10((10 ** (values["night"] / 10)).mean())
-
-            # Convert dB to power, apply weightings, and sum
-
-            l_den_power = (
-                (
-                    12
-                    * 10
-                    ** (
-                        np.nanmean(
-                            np.where(
-                                (vals.hour.values > 7) & (vals.hour.values <= 19),
-                                vals,
-                                np.nan,
-                            )
-                            / 10
-                        )
-                    )
-                )
-                + (
-                    4
-                    * 10
-                    ** (
-                        np.nanmean(
-                            np.where(
-                                (vals.hour.values > 19) & (vals.hour.values <= 23),
-                                vals,
-                                np.nan,
-                            )
-                            + 5
-                        )
-                        / 10
-                    )
-                )
-                + (
-                    8
-                    * 10
-                    ** (
-                        np.nanmean(
-                            np.where(
-                                (vals.hour.values > 0) & (vals.hour.values <= 7),
-                                vals,
-                                np.nan,
-                            )
-                            + 10
-                        )
-                        / 10
-                    )
-                )
-            )
-
-            # Convert back to dB to get L_den
-            l_den = 10 * np.log10(l_den_power / 24)
-
-            # Store L_den value for this listener
-            lden_values[listener] = np.round(l_den, 1)
-
-        return lden_values
 
     def update_listeners_with_lden(self, l_den):
         for listener, specs in self.listeners.items():
             if listener in l_den:
                 # Extract the numerical value from the xarray DataArray
-                specs["L_den"] = l_den[listener]
+                specs["l_den"] = l_den[listener]
 
     def display_listeners_on_map_with_Lden(self):
+        """
+        Display a map with listeners and their L_den values.
+        :return: pritn statement with the map saved location.
+        """
         icon_file_path = str(DATA_DIR / "pictures" / "icon_turbine.png")
         house_green_file_path = str(DATA_DIR / "pictures" / "house_green.png")
         house_orange_file_path = str(DATA_DIR / "pictures" / "house_orange.png")
@@ -218,8 +217,15 @@ class NoiseAnalysis:
         house_dark_red_file_path = str(DATA_DIR / "pictures" / "house_dark_red.png")
 
         # Create a folium map
+        # find firs the center of the map
+        center_lat = np.mean(
+            [specs["position"][0] for specs in self.listeners.values()]
+        )
+        center_lon = np.mean(
+            [specs["position"][1] for specs in self.listeners.values()]
+        )
         m = folium.Map(
-            location=[47.3769, 8.5417], zoom_start=12, tiles="CartoDB positron"
+            location=[center_lat, center_lon], zoom_start=12, tiles="CartoDB positron"
         )
 
         # Get the closest turbine distance for each listener
@@ -236,24 +242,26 @@ class NoiseAnalysis:
             else:
                 return house_dark_red_file_path
 
-        # Add markers for each listener with L_den value and distance to closest turbine
-        for listener in self.listeners:
-            listener_name = listener["name"]
+        # Add markers for each listener with L_den value
+        # and distance to the closest turbine
+        for listener, specs in self.listeners.items():
+            print(listener, specs)
             icon_image = folium.features.CustomIcon(
-                get_file_path(listener["L_den"]), icon_size=(50, 50)
+                get_file_path(specs["l_den"]), icon_size=(50, 50)
             )
             folium.Marker(
-                location=listener["position"],
-                popup=f"{listener_name}: L_den {listener['L_den']} dB, Closest turbine distance: {closest_turbine_distance[listener_name]} m",
+                location=specs["position"],
+                popup=f"{listener}: L_den {specs['l_den']} dB, "
+                f"Closest turbine distance: {closest_turbine_distance[listener]} m",
                 icon=icon_image,
             ).add_to(m)
 
         # Add markers for wind turbines
-        for turbine in self.wind_turbines:
+        for turbine, specs in self.wind_turbines.items():
             icon_image = folium.features.CustomIcon(icon_file_path, icon_size=(50, 50))
             folium.Marker(
-                location=turbine["position"],
-                popup=f"{turbine['name']}",
+                location=specs["position"],
+                popup=f"{turbine}",
                 icon=icon_image,
             ).add_to(m)
 
@@ -271,4 +279,7 @@ class NoiseAnalysis:
          """
         m.get_root().html.add_child(folium.Element(legend_html))
 
-        m.save(Path.cwd() / f"lden_map_{datetime.now()}.html")
+        # save the with today's date
+        m.save(str(Path.cwd() / f"lden_map_{datetime.now().date()}.html"))
+
+        print(f"Map saved to {Path.cwd() / f'lden_map_{datetime.now()}.html'}")
