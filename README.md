@@ -49,7 +49,7 @@ the L_den indicator. Results cna be exported on a map.
 
 ## License
 
-``windwhisper`` is distributed under the terms of the MIT license.
+``windwhisper`` is distributed under the terms of the BSD 3-Clause license.
 
 ## Authors
 
