@@ -58,4 +58,4 @@ the L_den indicator. Results cna be exported on a map.
 
 ## Acknowledgements
 The development of `windwhisper` is supported by the European project
-(WIMBY)[https://cordis.europa.eu/project/id/101083460] (Wind In My BackYard, grant agreement No 101083460).
+[WIMBY](https://cordis.europa.eu/project/id/101083460) (Wind In My BackYard, grant agreement No 101083460).
