@@ -6,6 +6,7 @@ from sys import exit
 from typing import List, Tuple, Dict
 from pathlib import Path
 import re
+import uuid
 
 import pandas as pd
 import numpy as np
@@ -23,6 +24,8 @@ import xarray as xr
 from xarray import DataArray
 from py_wake.wind_turbines.generic_wind_turbines import GenericWindTurbine
 from scipy.stats import pearsonr
+import osmnx as ox
+from osmnx._errors import InsufficientResponseError
 
 
 from . import DATA_DIR
@@ -102,7 +105,6 @@ def train_wind_turbine_model(file_path: str = None) -> Tuple[RegressorMixin, Lis
     rmse = np.sqrt(mse)
     print("Root Mean Squared Error (RMSE):", rmse)
 
-
     # Save the trained model for future use
     sio.dump(obj=(model, noise_cols), file=f"{Path(DATA_DIR / 'default_model')}.skops")
 
@@ -145,9 +147,7 @@ def check_wind_turbine_specs(wind_turbines: dict) -> dict:
         if not all(
             x in specs for x in mandatory_fields
         ):  # check that all mandatory fields are present
-            raise KeyError(
-                f"Missing mandatory field(s) in turbine {turbine}."
-            )
+            raise KeyError(f"Missing mandatory field(s) in turbine {turbine}.")
 
     # check that `power`, `diameter` and `hub height` are numeric
     # and positive
@@ -188,9 +188,7 @@ def check_wind_turbine_specs(wind_turbines: dict) -> dict:
     # check that the value for `position`is a tuple of two floats
     for turbine, specs in wind_turbines.items():
         if not isinstance(specs["position"], tuple):
-            raise ValueError(
-                f"The position of turbine {turbine} must be a tuple."
-            )
+            raise ValueError(f"The position of turbine {turbine} must be a tuple.")
         if len(specs["position"]) != 2:
             raise ValueError(
                 f"The position of turbine {turbine} must contain two values."
@@ -210,21 +208,17 @@ def check_listeners(listeners):
     :return: None or Exception
     """
 
-    mandatory_fields = ["position",]
+    mandatory_fields = [
+        "position",
+    ]
 
     for listener, specs in listeners.items():
-        if not all(
-            x in specs for x in mandatory_fields
-        ):
-            raise KeyError(
-                f"Missing mandatory field(s) in listener {listener}."
-            )
+        if not all(x in specs for x in mandatory_fields):
+            raise KeyError(f"Missing mandatory field(s) in listener {listener}.")
 
         # check that the value for `position`is a tuple of two floats
         if not isinstance(specs["position"], tuple):
-            raise ValueError(
-                f"The position of listener {listener} must be a tuple."
-            )
+            raise ValueError(f"The position of listener {listener} must be a tuple.")
         if len(specs["position"]) != 2:
             raise ValueError(
                 f"The position of listener {listener} must contain two values."
@@ -250,7 +244,7 @@ class WindTurbines:
         retrain_model: bool = False,
         dataset_file: str = None,
         wind_speed_data: xr.DataArray | str = None,
-
+        radius_threshold: float = 300.0,
     ):
         """
         Initializes the WindTurbines object.
@@ -264,7 +258,12 @@ class WindTurbines:
         self.ws = None
         self.noise_analysis = None
         self.wind_turbines = check_wind_turbine_specs(wind_turbines)
-        self.listeners = check_listeners(listeners)
+        if listeners is not None:
+            self.listeners = check_listeners(listeners)
+        else:
+            self.listeners = self.find_affected_buildings_from_radius(
+                radius=radius_threshold
+            )
         self.fetch_wind_speeds(wind_speed_data)
 
         if retrain_model:
@@ -340,7 +339,12 @@ class WindTurbines:
         for turbine, specs in self.wind_turbines.items():
             style = line_styles[i % len(line_styles)]
             marker = markers[i % len(markers)]
-            ax.plot(specs["noise_vs_wind_speed"], linestyle=style, marker=marker, label=turbine)
+            ax.plot(
+                specs["noise_vs_wind_speed"],
+                linestyle=style,
+                marker=marker,
+                label=turbine,
+            )
             i += 1
 
         plt.title("Noise vs Wind Speed")
@@ -393,7 +397,7 @@ class WindTurbines:
                 name=turbine["name"],
                 diameter=turbine["diameter"],
                 hub_height=turbine["hub height"],
-                power_norm=turbine["power"]
+                power_norm=turbine["power"],
             )
             power_curves[turbine["name"]] = gen_wt.power(ws) * 1e-3
 
@@ -421,5 +425,37 @@ class WindTurbines:
         plt.tight_layout()
         plt.show()
 
+    def find_affected_buildings_from_radius(self, radius: float) -> dict:
+        """
+        Finds the buildings located within the given radius of the wind turbines.
+        :param radius: The radius in meters.
+        :return: A dictionary (self.listeners) containing the affected buildings,
+        with their locations (using osmnx).
+        """
 
+        building_locations = {}
 
+        for turbine, specs in self.wind_turbines.items():
+            location = specs["position"]
+
+            try:
+                a = ox.features.features_from_point(
+                    location, tags={"building": True}, dist=float(radius)
+                )
+
+                # iterate over "geometry"
+                # if it's a polygon, find its centroid
+                # if it's a point, use directly
+
+                for b, building in enumerate(a["geometry"]):
+                    building_locations[f"Building {str(uuid.uuid4())}"] = {
+                        "position": (
+                            building.centroid.y,
+                            building.centroid.x,
+                        )
+                    }
+
+            except InsufficientResponseError:
+                pass
+
+        return building_locations

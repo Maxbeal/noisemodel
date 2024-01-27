@@ -3,11 +3,17 @@ import xarray as xr
 import folium
 from pathlib import Path
 from datetime import datetime
+from typing import Dict
 
 from . import DATA_DIR
 
 
-def compute_lden(data):
+def compute_lden(data: dict) -> Dict[str, float]:
+    """
+    Compute L_den values for each listener.
+    :param data: a dictionary with listener names as keys and xarray DataArrays as values
+    :return: a dictionary with listener names as keys and L_den values as values
+    """
     lden_values = {}
 
     for listener, vals in data.items():
@@ -72,6 +78,16 @@ def compute_lden(data):
 
 
 class NoiseAnalysis:
+    """
+    This class handles the basic functionalities related to noise data analysis.
+
+    :ivar wind_turbines: A list of dictionaries containing the wind turbine data.
+    :ivar noise_map: A NoiseMap object containing the noise data.
+    :ivar listeners: A list of dictionaries containing the observation points data.
+    :ivar alpha: Air absorption coefficient.
+
+    """
+
     def __init__(self, noise_map, wind_turbines, listeners):
         self.noise_map = noise_map
         self.wind_turbines = wind_turbines
@@ -84,6 +100,10 @@ class NoiseAnalysis:
         self.analyze_and_calculate_lden()
 
     def analyze_and_calculate_lden(self):
+        """
+        Analyze the noise data and calculate L_den values for each listener.
+        :return: updates the wt.listeners dictionary with L_den values
+        """
         # Step 1: Interpolate noise based on wind speed data
         interpolated_noise = self.interpolate_noise()
         # Step 2: Calculate the cumulative dB
@@ -208,7 +228,7 @@ class NoiseAnalysis:
     def display_listeners_on_map_with_Lden(self):
         """
         Display a map with listeners and their L_den values.
-        :return: pritn statement with the map saved location.
+        :return: print statement with the map saved location.
         """
         icon_file_path = str(DATA_DIR / "pictures" / "icon_turbine.png")
         house_green_file_path = str(DATA_DIR / "pictures" / "house_green.png")
@@ -245,7 +265,6 @@ class NoiseAnalysis:
         # Add markers for each listener with L_den value
         # and distance to the closest turbine
         for listener, specs in self.listeners.items():
-            print(listener, specs)
             icon_image = folium.features.CustomIcon(
                 get_file_path(specs["l_den"]), icon_size=(50, 50)
             )
