@@ -52,8 +52,8 @@ the L_den indicator. Results cna be exported on a map.
 
 ## Authors
 
-* Maxime Balandret
-* Romain Sacchi (romain.sacchi@psi.ch)
+* Maxime Balandret, Paul Scherrer Institut (PSI)
+* Romain Sacchi (romain.sacchi@psi.ch), Paul Scherrer Institut (PSI)
 
 ## Acknowledgements
 The development of `windwhisper` is supported by the European project
