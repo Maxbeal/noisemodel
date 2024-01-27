@@ -49,9 +49,13 @@ the L_den indicator. Results cna be exported on a map.
 
 ## License
 
-``windwhisper`` is distributed under the terms of the BSD 3-Clause license.
+``windwhisper`` is distributed under the terms of the BSD 3-Clause license (see LICENSE).
 
 ## Authors
 
 * Maxime Balandret
 * Romain Sacchi (romain.sacchi@psi.ch)
+
+## Acknowledgements
+The development of `windwhisper` is supported by the European project
+(WIMBY)[https://cordis.europa.eu/project/id/101083460] (Wind In My BackYard, grant agreement No 101083460).
