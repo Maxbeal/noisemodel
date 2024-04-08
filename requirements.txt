@@ -11,3 +11,4 @@ skops
 matplotlib
 netCDF4
 seaborn
+ipywidgets
