@@ -19,8 +19,7 @@ def load_wind_speed_data(filepath_wind_speed: Path, filepath_correction: Path = 
     :return: A xarray.DataArray containing the wind speed data.
     """
     if array is not None:
-        if "month" in array.coords:
-            return array.mean(dim="month")
+        return array
     else:
         wind_speed = xr.open_dataset(filepath_wind_speed).to_array().mean(dim="month")
         if filepath_correction is None:
