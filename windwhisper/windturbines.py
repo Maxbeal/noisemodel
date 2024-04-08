@@ -2,8 +2,7 @@
 This module contains the WindTurbines class which models a wind turbine and predicts noise levels based on wind speed.
 """
 
-from sys import exit
-from typing import List, Tuple, Dict
+from typing import List, Tuple
 from pathlib import Path
 import re
 import uuid
@@ -11,19 +10,14 @@ import uuid
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from joblib import dump, load
 from sklearn.base import RegressorMixin
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.impute import SimpleImputer, KNNImputer
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.multioutput import MultiOutputRegressor
-from tqdm import tqdm
 import skops.io as sio
 import xarray as xr
-from xarray import DataArray
-from py_wake.wind_turbines.generic_wind_turbines import GenericWindTurbine
-from scipy.stats import pearsonr
 import osmnx as ox
 from osmnx._errors import InsufficientResponseError
 
@@ -244,7 +238,7 @@ class WindTurbines:
         retrain_model: bool = False,
         dataset_file: str = None,
         wind_speed_data: xr.DataArray | str = None,
-        radius_threshold: float = 300.0,
+        radius_threshold: float = None,
     ):
         """
         Initializes the WindTurbines object.
@@ -261,9 +255,12 @@ class WindTurbines:
         if listeners is not None:
             self.listeners = check_listeners(listeners)
         else:
-            self.listeners = self.find_affected_buildings_from_radius(
-                radius=radius_threshold
-            )
+            if radius_threshold is None:
+                self.listeners = {}
+            else:
+                self.listeners = self.find_affected_buildings_from_radius(
+                    radius=radius_threshold
+                )
         self.fetch_wind_speeds(wind_speed_data)
 
         if retrain_model:
@@ -359,7 +356,7 @@ class WindTurbines:
         """
         Fetches the wind speed data. Either the wind speed data is provided
         as an argument to the constructor, or it is loaded from
-        tests/fixtures/era5_mean_2013-2022_month_by_hour.nc
+        dev/fixtures/era5_mean_2013-2022_month_by_hour.nc
         or, as a last resort, it is downloaded from the internet.
 
         :return: Updated wind_turbines with wind speed data.
@@ -384,46 +381,6 @@ class WindTurbines:
         )
         self.wind_turbines = self.noise_analysis.wind_turbines
         self.listeners = self.noise_analysis.listeners
-
-    def _generate_power_curves(self):
-        """
-        Generates the power curves for each wind turbine.
-        """
-        power_curves = {}
-        ws = np.arange(0, 25, 0.01)  # Wind speeds from 0 to 25 m/s
-
-        for turbine in self.wind_turbines:
-            gen_wt = GenericWindTurbine(
-                name=turbine["name"],
-                diameter=turbine["diameter"],
-                hub_height=turbine["hub height"],
-                power_norm=turbine["power"],
-            )
-            power_curves[turbine["name"]] = gen_wt.power(ws) * 1e-3
-
-        return power_curves
-
-    def plot_power_curves(self):
-        """
-        Plots the power curves for each wind turbine in small figures.
-        """
-        n_turbines = len(self.power_curves)
-        ws = np.arange(0, 25, 0.01)  # Wind speeds from 0 to 25 m/s
-
-        fig, axs = plt.subplots(1, n_turbines, figsize=(n_turbines * 5, 4))
-
-        if n_turbines == 1:
-            axs = [axs]
-
-        for ax, (name, power_curve) in zip(axs, self.power_curves.items()):
-            ax.plot(ws, power_curve, label=name)
-            ax.set_title(name)
-            ax.set_xlabel("Wind Speed [m/s]")
-            ax.set_ylabel("Power [kW]")
-            ax.grid(True)
-
-        plt.tight_layout()
-        plt.show()
 
     def find_affected_buildings_from_radius(self, radius: float) -> dict:
         """

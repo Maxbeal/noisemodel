@@ -1,12 +1,12 @@
 import numpy as np
-from typing import List, Dict, Tuple, Any
 from haversine import haversine, Unit
 import folium
 import ipywidgets as widgets
 from IPython.display import display
 import matplotlib.pyplot as plt
 import xarray as xr
-from . import SECRETS
+
+NOISE_MAP_RESOLUTION = 100
 
 class NoiseMap:
     """
@@ -35,7 +35,25 @@ class NoiseMap:
             self.superimpose_wind_turbines_noise()
         )  # pairs table with for each turbine, each listener
 
-        self.generate_noise_map()
+        self.LAT, self.LON, self.noise_propagation_array = self.generate_noise_map()
+        self.noise_level_at_wind_speeds = self.noise_map_at_wind_speeds(
+            np.vstack(
+                [
+                    specs["noise_vs_wind_speed"].values
+                    for specs in self.wind_turbines.values()
+                ]
+            )
+        )
+        self.noise_level_at_mean_wind_speed = self.noise_map_at_wind_speeds(
+            np.vstack(
+                [
+                    specs["noise_vs_wind_speed"].interp(
+                        wind_speed=specs["mean_wind_speed"].mean()
+                    )
+                    for specs in self.wind_turbines.values()
+                ]
+            )
+        )
 
     def calculate_sound_level_at_distance(
         self, dBsource: float, distance: float
@@ -92,36 +110,69 @@ class NoiseMap:
             pair["intensity_level_dB"] = dB_level
         return pairs
 
-    def generate_noise_map(self):
+    def noise_map_at_wind_speeds(self, noise) -> xr.DataArray:
+        """
+        Generates a noise map for the wind turbines
+        and observation points for each wind speed level.
+
+        :param noise: A 2D array representing the noise level vs wind speed.
+
+        Returns:
+            np.ndarray: A 2D array representing the noise map.
+        """
+
+        intensity_distance = noise - self.noise_propagation_array[..., None]
+
+        # dB at distance
+        Z = 10 * np.log10((10 ** (intensity_distance / 10)).sum(axis=2))
+
+        # create xarray to store Z
+        Z = xr.DataArray(
+            data=Z,
+            dims=("lat", "lon", "wind_speed"),
+            coords={"lat": self.LAT[0], "lon": self.LON[0], "wind_speed": noise.shape[-1]},
+        )
+
+        return Z
+
+    def generate_noise_map(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Generates a noise map for the wind turbines
         and observation points based on the given wind speed.
         """
 
         # Determine the bounding box for the map
+
         lat_min = min(
-            turbine["turbine_position"][0] for turbine in self.individual_noise
+            turbine["position"][0] for turbine in self.wind_turbines.values()
         )
         lat_max = max(
-            turbine["turbine_position"][0] for turbine in self.individual_noise
+            turbine["position"][0] for turbine in self.wind_turbines.values()
         )
         lon_min = min(
-            turbine["turbine_position"][1] for turbine in self.individual_noise
+            turbine["position"][1] for turbine in self.wind_turbines.values()
         )
         lon_max = max(
-            turbine["turbine_position"][1] for turbine in self.individual_noise
+            turbine["position"][1] for turbine in self.wind_turbines.values()
         )
         margin = (1/125)
 
         # Adjust the map size to include observation points
-        for point in self.individual_noise:
-            lat_min = min(lat_min, point["listener_position"][0]) - margin
-            lat_max = max(lat_max, point["listener_position"][0]) + margin
-            lon_min = min(lon_min, point["listener_position"][1]) - margin
-            lon_max = max(lon_max, point["listener_position"][1]) + margin
+        # if any are present
+        if self.listeners:
+            for point in self.individual_noise:
+                lat_min = min(lat_min, point["listener_position"][0]) - margin
+                lat_max = max(lat_max, point["listener_position"][0]) + margin
+                lon_min = min(lon_min, point["listener_position"][1]) - margin
+                lon_max = max(lon_max, point["listener_position"][1]) + margin
+        else:
+            lat_min -= margin
+            lat_max += margin
+            lon_min -= margin
+            lon_max += margin
 
-        lon_array = np.linspace(lon_min, lon_max, 100)
-        lat_array = np.linspace(lat_min, lat_max, 100)
+        lon_array = np.linspace(lon_min, lon_max, NOISE_MAP_RESOLUTION)
+        lat_array = np.linspace(lat_min, lat_max, NOISE_MAP_RESOLUTION)
         LON, LAT = np.meshgrid(lon_array, lat_array)
 
         # Calculate the noise level at each point
@@ -135,27 +186,9 @@ class NoiseMap:
             ]
         ).reshape(LAT.shape[0], LAT.shape[1], len(positions))
 
-        distance_noise = 20 * np.log10(distances)  # dB
+        noise_propagation_over_distance = 20 * np.log10(distances)  # dB
 
-        noise = np.vstack(
-            [
-                specs["noise_vs_wind_speed"].values
-                for specs in self.wind_turbines.values()
-            ]
-        )
-
-        intensity_distance = noise - distance_noise[..., None]
-        # dB at distance
-        Z = 10 * np.log10((10 ** (intensity_distance / 10)).sum(axis=2))
-        # create xarray to store Z
-        Z = xr.DataArray(
-            data=Z,
-            dims=("lat", "lon", "wind_speed"),
-            coords={"lat": LAT[0], "lon": LON[0], "wind_speed": range(3, 13)},
-        )
-
-        # Store the values for later use
-        self.LAT, self.LON, self.Z = LAT, LON, Z
+        return LAT, LON, noise_propagation_over_distance
 
     def plot_noise_map(self):
         """

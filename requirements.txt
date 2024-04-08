@@ -6,10 +6,8 @@ windrose
 xarray
 scikit-learn
 numpy
-ipywidgets
 osmnx
 skops
 matplotlib
 netCDF4
 seaborn
-py_wake
