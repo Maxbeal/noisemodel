@@ -166,6 +166,11 @@ class WindSpeed:
             else:
                 height = specs["hub height"]
 
+            if specs["height"] < self.wind_speed.height.min():
+                height = self.wind_speed.height.min()
+            else:
+                height = specs["height"]
+
             specs["mean_wind_speed"] = self.wind_speed.sel(
                 latitude=specs["position"][0],
                 longitude=specs["position"][1],
