@@ -127,10 +127,11 @@ class NoiseMap:
         Z = 10 * np.log10((10 ** (intensity_distance / 10)).sum(axis=2))
 
         # create xarray to store Z
+
         Z = xr.DataArray(
             data=Z,
             dims=("lat", "lon", "wind_speed"),
-            coords={"lat": self.LAT[0], "lon": self.LON[0], "wind_speed": noise.shape[-1]},
+            coords={"lat": self.LAT[:,0], "lon": self.LON[0,:], "wind_speed": noise.shape[-1]},
         )
 
         return Z
