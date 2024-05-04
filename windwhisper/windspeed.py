@@ -159,17 +159,14 @@ class WindSpeed:
         """
 
         for turbine, specs in self.wind_turbines.items():
+            height = specs["height"]
             # if hub height superior to the maximum height
             # of the wind speed data, set to maximum height
             if specs["hub height"] > self.wind_speed.height.max():
                 height = self.wind_speed.height.max()
-            else:
-                height = specs["hub height"]
 
             if specs["height"] < self.wind_speed.height.min():
                 height = self.wind_speed.height.min()
-            else:
-                height = specs["height"]
 
             specs["mean_wind_speed"] = self.wind_speed.sel(
                 latitude=specs["position"][0],
