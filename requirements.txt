@@ -7,7 +7,7 @@ xarray
 scikit-learn
 numpy
 osmnx
-skops
+skops==0.9.0
 matplotlib
 netCDF4
 seaborn
