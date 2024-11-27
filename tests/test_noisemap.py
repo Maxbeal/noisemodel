@@ -1,6 +1,5 @@
 import pytest
 from windwhisper.noisemap import NoiseMap
-from unittest.mock import MagicMock
 from unittest.mock import patch
 import numpy as np
 import xarray as xr
